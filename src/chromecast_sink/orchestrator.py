@@ -134,7 +134,7 @@ class Orchestrator:
             return self._run_http(cast, local_ip, device_name)
 
     def _run_streaming(self, cast, cast_host: str) -> int:
-        """Cast Streaming pipeline (WebRTC/UDP, ~400ms latency)."""
+        """Cast Streaming pipeline (WebRTC/UDP)."""
         assert self._sink_info is not None
 
         # Phase 5: Connect to Chromecast and set up signaling
@@ -222,7 +222,7 @@ class Orchestrator:
         return 0
 
     def _run_http(self, cast, local_ip: str, device_name: str) -> int:
-        """Legacy HTTP streaming pipeline (~2-10s latency)."""
+        """Legacy HTTP streaming pipeline."""
         assert self._sink_info is not None
 
         # Phase 5: Start FFmpeg
