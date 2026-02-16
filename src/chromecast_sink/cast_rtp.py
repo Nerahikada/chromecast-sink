@@ -49,8 +49,7 @@ class CastRTPSender:
 
     Each Opus frame is:
     1. Encrypted with AES-128-CTR (key from OFFER, nonce from ivMask XOR frame_id)
-    2. Wrapped in a Cast RTP packet (standard header + Cast extension
-       + adaptive latency extension)
+    2. Wrapped in a Cast RTP packet (standard header + Cast extension)
     3. Sent via UDP to the Chromecast's negotiated port
     """
 
