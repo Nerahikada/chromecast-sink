@@ -12,15 +12,6 @@ logger = logging.getLogger(__name__)
 # 16384 bytes ≈ 47ms of audio — still low-latency but fewer write calls.
 CHUNK_SIZE = 16384
 
-# File extension used in the stream URL.
-# Chromecast may use this to detect format, so we make it match.
-_STREAM_EXTENSIONS = {
-    "audio/wav": "wav",
-    "audio/mpeg": "mp3",
-    "audio/flac": "flac",
-}
-
-
 class _AudioStreamHandler(BaseHTTPRequestHandler):
     """Serves a continuous audio stream from FFmpeg stdout."""
 
