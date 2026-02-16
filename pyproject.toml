@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Use Google Chromecast / Nest as a Linux speaker output via PipeWire virtual sink"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{name = "Nerahikada"}]
 keywords = ["chromecast", "pipewire", "audio", "linux", "cast", "nest"]
 classifiers = [
@@ -17,7 +17,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

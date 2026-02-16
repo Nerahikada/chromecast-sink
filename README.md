@@ -15,7 +15,7 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 ## Requirements
 
 - **OS**: Linux with PipeWire (tested on Ubuntu 25.10)
-- **Python**: 3.10+
+- **Python**: 3.11+
 - **System packages**:
   ```bash
   sudo apt install ffmpeg pulseaudio-utils pipewire
