@@ -91,8 +91,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="stream",
         help=(
             "Streaming mode (default: stream). "
-            "stream = Cast Streaming via UDP (~400ms latency), "
-            "http = legacy HTTP streaming (~2-10s latency)."
+            "stream = Cast Streaming via UDP, "
+            "http = legacy HTTP streaming."
         ),
     )
     parser.add_argument(
@@ -127,10 +127,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="wav",
         help=(
             "Audio format (default: wav). "
-            "wav = WAV 32-bit (~2s latency), "
-            "wav16 = WAV 16-bit (~3-5s), "
-            "flac = FLAC (~5-7s), "
-            "mp3 = MP3 (~10s)."
+            "wav = WAV 32-bit, "
+            "wav16 = WAV 16-bit, "
+            "flac = FLAC, "
+            "mp3 = MP3."
         ),
     )
     http_group.add_argument(
