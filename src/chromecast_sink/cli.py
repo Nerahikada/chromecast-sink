@@ -38,6 +38,9 @@ def _check_dependencies(mode: str) -> list[str]:
     if not shutil.which("pw-cli"):
         errors.append("pw-cli not found. Install with: sudo apt install pipewire")
 
+    if not shutil.which("pw-dump"):
+        errors.append("pw-dump not found. Install with: sudo apt install pipewire")
+
     # Check PipeWire / PulseAudio is running
     result = subprocess.run(
         ["pactl", "info"],
