@@ -6,8 +6,8 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 
 ## Features
 
-- **Cast Streaming mode** (default) — ~350ms latency via UDP, Opus encoding, AES-128-CTR encrypted Cast RTP
-- **Legacy HTTP mode** — WAV/FLAC/MP3 streaming, ~2-10s latency, broader device compatibility
+- **Cast Streaming** — Low-latency UDP streaming with Opus encoding and AES-128-CTR encrypted Cast RTP
+- **No subprocesses** — Captures and encodes in-process via libpulse and libopus; nothing to spawn, nothing to pipe
 - **PipeWire native** — Creates a proper audio sink visible in GNOME Sound Settings
 - **Auto-discovery** — Finds Chromecast/Nest devices on your network via mDNS
 - **Clean lifecycle** — Ctrl+C gracefully removes the virtual sink and disconnects
@@ -18,9 +18,8 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 - **Python**: 3.11+
 - **System packages**:
   ```bash
-  sudo apt install ffmpeg pulseaudio-utils pipewire
+  sudo apt install libopus0 pulseaudio-utils pipewire
   ```
-  FFmpeg must be built with libopus support (included in Ubuntu's default ffmpeg package).
 
 ## Installation
 
@@ -33,14 +32,11 @@ pip install -e .
 ## Usage
 
 ```bash
-# Default: Cast Streaming mode (~350ms latency)
+# Stream to the only device found, or pick from a menu
 chromecast-sink
 
 # Specify device by name
 chromecast-sink --device "Living Room speaker"
-
-# Legacy HTTP mode (broader compatibility, higher latency)
-chromecast-sink --mode http
 
 # Debug logging
 chromecast-sink --verbose
@@ -51,50 +47,34 @@ After starting, select **"Chromecast - \<device name\>"** as your audio output i
 ### Options
 
 ```
-Mode:
-  --mode {stream,http}     Cast Streaming (UDP) or legacy HTTP (default: stream)
-
-Stream mode:
+  -d, --device NAME        Select Chromecast by name
   --target-delay MS        Target playout delay in ms (default: 0)
   --opus-bitrate RATE      Opus bitrate, e.g. 128k (default: 128k)
-
-HTTP mode:
-  --format {wav,wav16,flac,mp3}  Audio format (default: wav)
-  --bitrate RATE           MP3 bitrate (default: 320k)
-  --port PORT              HTTP server port (default: auto)
-
-General:
-  -d, --device NAME        Select Chromecast by name
   -t, --timeout SECS       Discovery timeout (default: 10)
   -v, --verbose            Enable debug logging
 ```
 
 ## Architecture
 
-### Cast Streaming mode (`--mode stream`)
-
 ```
 PipeWire Virtual Sink
-  └─ monitor ──> FFmpeg (Opus encode) ──RTP──> Python relay
-                                                  │
-                                        AES-128-CTR encrypt
-                                        Cast RTP packetize
-                                                  │
-                                          UDP ──> Chromecast
+  └─ monitor ──> libpulse capture ──> libopus encode
+                                           │
+                                 AES-128-CTR encrypt
+                                 Cast RTP packetize
+                                           │
+                                     UDP ──> Chromecast
 ```
 
-Audio is captured from the virtual sink's monitor, encoded as Opus by FFmpeg, then encrypted and packetized using the Cast Streaming protocol (custom RTP, not WebRTC/SRTP) before being sent over UDP.
+Audio is captured from the virtual sink's monitor source and encoded as 10ms Opus frames, then encrypted and packetized using the Cast Streaming protocol (a custom RTP profile, not WebRTC/SRTP) before being sent over UDP.
 
-### Legacy HTTP mode (`--mode http`)
+Capture and encoding both run in-process through `ctypes` bindings to the system's `libpulse` and `libopus`. A blocking read of one fragment per Opus frame paces the loop at real time, so no timer or buffering layer is involved.
 
-```
-PipeWire Virtual Sink
-  └─ monitor ──> FFmpeg (WAV/MP3/FLAC) ──pipe──> HTTP Server
-                                                      │
-                                        Chromecast pulls audio stream
-```
+## Scope
 
-Audio is encoded by FFmpeg and served via a local HTTP server. The Chromecast pulls the stream using its Default Media Receiver.
+This tool does one thing: low-latency Cast Streaming to a single device.
+
+If you want HTTP-based streaming instead — broader device compatibility, and a virtual sink per discovered device, at the cost of several seconds of latency — use [p-cast](https://github.com/GenessyX/p-cast), which serves HLS segments over HTTP.
 
 ## Known Limitations
 

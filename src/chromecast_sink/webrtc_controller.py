@@ -20,7 +20,23 @@ from pychromecast.controllers import BaseController
 logger = logging.getLogger(__name__)
 
 WEBRTC_NAMESPACE = "urn:x-cast:com.google.cast.webrtc"
+
+# Cast Streaming receiver apps, per openscreen
+# cast/common/public/cast_streaming_app_ids.h (GetCastStreamingAudioVideoAppId /
+# GetCastStreamingAudioOnlyAppId). Audio-only receivers report the video app as
+# APP_UNAVAILABLE and fail its launch with SYSTEM_ERROR. Both apps speak the
+# same webrtc namespace and OFFER/ANSWER.
 MIRRORING_APP_ID = "0F5096E8"
+MIRRORING_AUDIO_APP_ID = "85CDB22F"
+
+
+def mirroring_app_id(cast: pychromecast.Chromecast) -> str:
+    """Return the Cast Streaming app ID this receiver supports."""
+    return (
+        MIRRORING_AUDIO_APP_ID
+        if cast.cast_info.cast_type == "audio"
+        else MIRRORING_APP_ID
+    )
 
 
 @dataclass
@@ -184,8 +200,10 @@ def launch_mirroring_app(
     Raises:
         RuntimeError: If the app fails to launch within the timeout.
     """
+    app_id = mirroring_app_id(cast)
+
     # Already running?
-    if cast.app_id == MIRRORING_APP_ID:
+    if cast.app_id == app_id:
         logger.info("Mirroring app already running")
         return
 
@@ -193,14 +211,15 @@ def launch_mirroring_app(
 
     class _Listener:
         def new_cast_status(self, status):
-            if status.app_id == MIRRORING_APP_ID:
+            if status.app_id == app_id:
                 app_ready.set()
 
     listener = _Listener()
     cast.register_status_listener(listener)
 
-    logger.info("Launching mirroring app %s", MIRRORING_APP_ID)
-    cast.start_app(MIRRORING_APP_ID)
+    logger.info("Launching mirroring app %s (cast type: %s)",
+                app_id, cast.cast_info.cast_type)
+    cast.start_app(app_id)
 
     if not app_ready.wait(timeout=timeout):
         raise RuntimeError(

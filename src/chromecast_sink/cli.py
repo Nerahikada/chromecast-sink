@@ -8,8 +8,7 @@ import shutil
 import subprocess
 import sys
 
-from chromecast_sink import __version__
-from chromecast_sink.audio_capture import FORMATS
+from chromecast_sink import __version__, _opus, _pulse
 from chromecast_sink.orchestrator import Config, Orchestrator
 
 
@@ -23,12 +22,14 @@ def _parse_bitrate(value: str) -> int:
     return int(value)
 
 
-def _check_dependencies(mode: str) -> list[str]:
-    """Check that required system tools are available."""
+def _check_dependencies() -> list[str]:
+    """Check that required system libraries and tools are available."""
     errors = []
 
-    if not shutil.which("ffmpeg"):
-        errors.append("ffmpeg not found. Install with: sudo apt install ffmpeg")
+    for check in (_opus.check_available, _pulse.check_available):
+        error = check()
+        if error:
+            errors.append(error)
 
     if not shutil.which("pactl"):
         errors.append(
@@ -53,20 +54,6 @@ def _check_dependencies(mode: str) -> list[str]:
             "  systemctl --user status pipewire pipewire-pulse"
         )
 
-    # Check for libopus support in FFmpeg (needed for stream mode)
-    if mode == "stream":
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True,
-            text=True,
-        )
-        if "libopus" not in result.stdout:
-            errors.append(
-                "FFmpeg was built without libopus support.\n"
-                "  Install with: sudo apt install libopus-dev\n"
-                "  Or use --mode http for legacy HTTP streaming."
-            )
-
     return errors
 
 
@@ -89,16 +76,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Connect to a specific device by name (skip interactive selection)",
     )
     parser.add_argument(
-        "-m", "--mode",
-        choices=["stream", "http"],
-        default="stream",
-        help=(
-            "Streaming mode (default: stream). "
-            "stream = Cast Streaming via UDP, "
-            "http = legacy HTTP streaming."
-        ),
-    )
-    parser.add_argument(
         "--target-delay",
         type=int,
         default=0,
@@ -106,58 +83,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Target playout delay in milliseconds (default: 0). "
             "0 = minimum latency, higher = more buffer against dropouts. "
-            "Valid range: 0-5000. Only used with --mode stream."
+            "Valid range: 0-5000."
         ),
     )
     parser.add_argument(
         "--opus-bitrate",
         default="128k",
         metavar="RATE",
-        help=(
-            "Opus bitrate for stream mode (default: 128k). "
-            "Only used with --mode stream."
-        ),
+        help="Opus bitrate (default: 128k)",
     )
-
-    # HTTP mode options
-    http_group = parser.add_argument_group(
-        "HTTP mode options",
-        "These options only apply when using --mode http.",
-    )
-    http_group.add_argument(
-        "-f", "--format",
-        choices=list(FORMATS.keys()),
-        default="wav",
-        help=(
-            "Audio format (default: wav). "
-            "wav = WAV 32-bit, "
-            "wav16 = WAV 16-bit, "
-            "flac = FLAC, "
-            "mp3 = MP3."
-        ),
-    )
-    http_group.add_argument(
-        "-b", "--bitrate",
-        default="320k",
-        metavar="RATE",
-        help="MP3 bitrate (default: 320k). Only used with --format mp3.",
-    )
-    http_group.add_argument(
-        "--sample-rate",
-        type=int,
-        default=44100,
-        metavar="HZ",
-        help="Audio sample rate in Hz (default: 44100)",
-    )
-    http_group.add_argument(
-        "-p", "--port",
-        type=int,
-        default=0,
-        metavar="PORT",
-        help="HTTP server port (default: auto-select)",
-    )
-
-    # Common options
     parser.add_argument(
         "-t", "--timeout",
         type=float,
@@ -187,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Check dependencies
-    errors = _check_dependencies(args.mode)
+    errors = _check_dependencies()
     if errors:
         print("Missing dependencies:", file=sys.stderr)
         for err in errors:
@@ -196,11 +130,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # Build config and run
     config = Config(
-        mode=args.mode,
-        audio_format=args.format,
-        bitrate=args.bitrate,
-        sample_rate=args.sample_rate,
-        port=args.port,
         device_name=args.device,
         timeout=args.timeout,
         target_delay=args.target_delay,

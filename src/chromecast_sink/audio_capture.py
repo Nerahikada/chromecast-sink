@@ -1,221 +1,125 @@
-"""FFmpeg subprocess management for audio capture and encoding."""
+"""Audio capture and Opus encoding for the Cast Streaming pipeline.
+
+Reads PCM from the virtual sink's monitor source and encodes it to Opus
+in-process, feeding frames straight to the Cast RTP sender.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
-import subprocess
+import threading
 import time
-from dataclasses import dataclass
+
+from chromecast_sink._opus import OpusEncoder
+from chromecast_sink._pulse import MonitorRecorder
+from chromecast_sink.cast_rtp import OPUS_SAMPLES_PER_FRAME, CastRTPSender
 
 logger = logging.getLogger(__name__)
 
-# Audio format definitions.
-# Chromecast Default Media Receiver buffers ~512KB before playback starts.
-# Higher bitrate = buffer fills faster = lower latency.
-#
-# Format     | Bitrate      | 512KB fill time | Typical latency
-# -----------+--------------+-----------------+----------------
-# wav32      | ~345 KB/s    | ~1.5s           | ~2s
-# wav16      | ~172 KB/s    | ~3s             | ~3-5s
-# flac       | ~100 KB/s    | ~5s             | ~5-7s
-# mp3 320k   | ~40 KB/s     | ~13s            | ~10s
+SAMPLE_RATE = 48000
+CHANNELS = 2
+_BYTES_PER_SAMPLE = 2
+
+# One fragment per Opus frame, so a read yields exactly one frame to encode.
+# The sink's quantum (node.force-quantum) dominates capture latency, so there
+# is nothing to gain from reading in smaller pieces.
+FRAGMENT_BYTES = OPUS_SAMPLES_PER_FRAME * CHANNELS * _BYTES_PER_SAMPLE
+
+# If the process stalls (GC, scheduler), audio piles up server-side and the
+# backlog never clears on its own: reading proceeds at real time, so it can
+# never outpace the source. Discarding the backlog is the only way back to low
+# latency, and it costs one audible glitch instead of permanent delay.
+_DRAIN_THRESHOLD_MS = 30.0
+_DRAIN_TARGET_MS = 10.0
+_DRAIN_MAX_FRAMES = 2000  # 20s; a runaway guard, never reached in practice
 
 
-@dataclass
-class AudioFormat:
-    """Audio format configuration for FFmpeg and HTTP server."""
+def _drain(recorder: MonitorRecorder) -> int:
+    """Discard buffered audio until capture latency is back to target.
 
-    name: str
-    ffmpeg_args: list[str]
-    content_type: str
-
-
-FORMATS: dict[str, AudioFormat] = {
-    "wav": AudioFormat(
-        name="wav",
-        # WAV 32-bit LE: highest bitrate → lowest latency (~2s)
-        ffmpeg_args=["-acodec", "pcm_s32le", "-f", "wav"],
-        content_type="audio/wav",
-    ),
-    "wav16": AudioFormat(
-        name="wav16",
-        # WAV 16-bit LE: moderate bitrate → moderate latency (~3-5s)
-        ffmpeg_args=["-acodec", "pcm_s16le", "-f", "wav"],
-        content_type="audio/wav",
-    ),
-    "flac": AudioFormat(
-        name="flac",
-        ffmpeg_args=["-acodec", "flac", "-f", "flac"],
-        content_type="audio/flac",
-    ),
-    "mp3": AudioFormat(
-        name="mp3",
-        # MP3 at specified bitrate (set dynamically)
-        ffmpeg_args=["-acodec", "libmp3lame", "-f", "mp3"],
-        content_type="audio/mpeg",
-    ),
-}
-
-
-def start_ffmpeg(
-    monitor_source: str,
-    audio_format: str = "wav",
-    bitrate: str = "320k",
-    sample_rate: int = 44100,
-) -> subprocess.Popen:
-    """Launch FFmpeg to capture audio from a PulseAudio monitor source.
-
-    Args:
-        monitor_source: PulseAudio source name (e.g. "chromecast_sink_xxx.monitor").
-        audio_format: Output format key (wav, wav16, flac, mp3).
-        bitrate: MP3 bitrate (only used when audio_format="mp3").
-        sample_rate: Audio sample rate in Hz.
-
-    Returns:
-        The running FFmpeg subprocess with stdout=PIPE.
+    Returns the number of frames dropped.
     """
-    fmt = FORMATS[audio_format]
-
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "warning",
-        # Input: PulseAudio monitor source (works via PipeWire compatibility)
-        "-f", "pulse",
-        "-fragment_size", "1024",
-        "-i", monitor_source,
-        # Output settings
-        "-ac", "2",
-        "-ar", str(sample_rate),
-        *fmt.ffmpeg_args,
-        "-fflags", "+nobuffer",
-        "-flush_packets", "1",
-    ]
-
-    # Add bitrate for MP3
-    if audio_format == "mp3":
-        cmd.extend(["-ab", bitrate])
-
-    cmd.append("pipe:1")
-
-    logger.debug("Starting FFmpeg: %s", " ".join(cmd))
-
-    env = {**os.environ, "PULSE_LATENCY_MSEC": "20"}
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-    )
-
-    return proc
+    dropped = 0
+    while dropped < _DRAIN_MAX_FRAMES and recorder.latency_ms() > _DRAIN_TARGET_MS:
+        recorder.read()
+        dropped += 1
+    return dropped
 
 
-def verify_ffmpeg_running(proc: subprocess.Popen, wait_seconds: float = 0.3) -> None:
-    """Check that FFmpeg started successfully.
-
-    Polls the process after a short delay. If it exited, reads stderr
-    for the error message.
-
-    Raises:
-        RuntimeError: If FFmpeg exited early.
-    """
-    time.sleep(wait_seconds)
-    retcode = proc.poll()
-    if retcode is not None:
-        stderr = ""
-        if proc.stderr:
-            stderr = proc.stderr.read().decode(errors="replace")
-        raise RuntimeError(
-            f"FFmpeg exited with code {retcode}.\n"
-            f"stderr: {stderr}"
-        )
-    logger.debug("FFmpeg is running (pid=%d)", proc.pid)
-
-
-def start_ffmpeg_opus_rtp(
+def run_capture(
     monitor_source: str,
-    local_rtp_port: int,
+    cast_sender: CastRTPSender,
+    stop_event: threading.Event,
     bit_rate: int = 128000,
-) -> subprocess.Popen:
-    """Launch FFmpeg to encode audio as Opus and output via RTP to localhost.
+) -> None:
+    """Capture, encode, and send audio until stop_event is set.
 
-    Used by the Cast Streaming pipeline. FFmpeg encodes audio as Opus
-    and sends standard RTP packets to a local UDP port, where the
-    Python relay thread picks them up for Cast RTP re-packetization.
+    Each read blocks for one 10ms fragment, which paces the loop at real time.
 
     Args:
-        monitor_source: PulseAudio source name.
-        local_rtp_port: Local UDP port for RTP output.
-        bit_rate: Opus bitrate in bps (default 128000).
-
-    Returns:
-        The running FFmpeg subprocess.
+        monitor_source: PulseAudio monitor source name of the virtual sink.
+        cast_sender: Configured CastRTPSender to receive the Opus frames.
+        stop_event: Set this to stop the loop.
+        bit_rate: Opus bitrate in bps.
     """
-    input_args = [
-        "-analyzeduration", "0",
-        "-probesize", "32",
-        "-f", "pulse",
-        "-fragment_size", "1024",
-        "-i", monitor_source,
-    ]
-
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "warning",
-        *input_args,
-        # Output: Opus, 48kHz stereo
-        "-c:a", "libopus",
-        "-ar", "48000",
-        "-ac", "2",
-        "-b:a", str(bit_rate),
-        # Low-latency Opus settings:
-        # - frame_duration 10ms (vs default 20ms)
-        # - application=lowdelay reduces algorithmic delay from ~26.5ms to ~5ms
-        "-frame_duration", "10",
-        "-application", "lowdelay",
-        "-fflags", "+nobuffer",
-        "-flush_packets", "1",
-        # RTP output: max_delay=0 disables packet batching
-        "-max_delay", "0",
-        "-f", "rtp",
-        f"rtp://127.0.0.1:{local_rtp_port}",
-    ]
-
-    logger.debug("Starting FFmpeg (Opus/RTP): %s", " ".join(cmd))
-
-    # PULSE_LATENCY_MSEC overrides PipeWire's pulse.default.frag (default 2s!)
-    env = {**os.environ, "PULSE_LATENCY_MSEC": "20"}
-
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        env=env,
+    recorder = MonitorRecorder(
+        monitor_source,
+        sample_rate=SAMPLE_RATE,
+        channels=CHANNELS,
+        fragment_bytes=FRAGMENT_BYTES,
     )
-    return proc
+    encoder = OpusEncoder(
+        sample_rate=SAMPLE_RATE, channels=CHANNELS, bit_rate=bit_rate
+    )
+    logger.info(
+        "Capture started: %s, Opus %d kbps, %d ms frames, encoder lookahead %.1f ms",
+        monitor_source,
+        bit_rate // 1000,
+        OPUS_SAMPLES_PER_FRAME * 1000 // SAMPLE_RATE,
+        encoder.lookahead_samples * 1000 / SAMPLE_RATE,
+    )
 
+    start = time.monotonic()
+    first_frame: float | None = None
+    frames = 0
+    dropped_total = 0
+    last_stats = start
 
-def stop_ffmpeg(proc: subprocess.Popen) -> None:
-    """Terminate the FFmpeg process gracefully."""
-    if proc.poll() is not None:
-        return  # Already exited
-
-    logger.debug("Stopping FFmpeg (pid=%d)", proc.pid)
-
-    proc.terminate()
     try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        logger.debug("FFmpeg did not exit after SIGTERM, sending SIGKILL")
-        proc.kill()
-        proc.wait(timeout=2)
+        while not stop_event.is_set():
+            pcm = recorder.read()
 
-    # Close file descriptors
-    if proc.stdout:
-        proc.stdout.close()
-    if proc.stderr:
-        proc.stderr.close()
+            if recorder.latency_ms() > _DRAIN_THRESHOLD_MS:
+                dropped = _drain(recorder) + 1  # the frame just read is stale too
+                dropped_total += dropped
+                logger.warning(
+                    "Fell behind; dropped %d frames (%d ms) to restore latency",
+                    dropped, dropped * OPUS_SAMPLES_PER_FRAME * 1000 // SAMPLE_RATE,
+                )
+                continue
+
+            now = time.monotonic()
+            if first_frame is None:
+                first_frame = now
+                logger.info(
+                    "First audio frame captured (%.0f ms after start)",
+                    (now - start) * 1000,
+                )
+
+            cast_sender.send_frame(encoder.encode(pcm, OPUS_SAMPLES_PER_FRAME))
+            frames += 1
+
+            if now - last_stats >= 5.0:
+                elapsed = now - first_frame
+                logger.info(
+                    "Capture stats: %d frames in %.1fs (%.1f fps, expected ~100), "
+                    "%d dropped, latency %.1f ms",
+                    frames, elapsed, frames / elapsed if elapsed > 0 else 0,
+                    dropped_total, recorder.latency_ms(),
+                )
+                last_stats = now
+    finally:
+        recorder.close()
+        logger.info(
+            "Capture stopped (%d frames sent, %d dropped)", frames, dropped_total
+        )
