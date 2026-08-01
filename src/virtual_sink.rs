@@ -84,12 +84,7 @@ fn sanitize_sink_name(device_name: &str) -> String {
     while out.ends_with('_') {
         out.pop();
     }
-    if out == "chromecast_sink" {
-        // preserve the trailing underscore-less form for empty names
-        out
-    } else {
-        out
-    }
+    out
 }
 
 fn run_pw_thread(

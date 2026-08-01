@@ -85,7 +85,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     // Phase 8: shutdown coordination
     let stop = Arc::new(AtomicBool::new(false));
-    install_signal_handler(Arc::clone(&stop))?;
+    install_signal_handler(Arc::clone(&stop));
 
     // Phase 9: capture in this thread (the RTCP thread runs in the background)
     println!(
@@ -123,18 +123,9 @@ fn pick_device(mut devices: Vec<Device>) -> Result<Device> {
     bail!("device selection required")
 }
 
-fn install_signal_handler(stop: Arc<AtomicBool>) -> Result<()> {
-    // Minimal SIGINT/SIGTERM handler using a background thread + libc::sigwait
-    // would need `nix`; keep dep count low by using ctrlc-style: a plain
-    // std::os signal handler via ctrlc crate — but we don't have that dep.
-    //
-    // Simpler: install via `signal_hook` — also new dep. To avoid adding
-    // anything, use libc directly. Since std doesn't expose signal handling,
-    // spawn a thread that blocks on kill via a self-pipe... too much.
-    //
-    // Cheapest correct approach: use `std::process::exit` never, and let the
-    // signal handler set a global flag. libc::signal is safe enough for our
-    // limited use.
+/// SIGINT/SIGTERM handler that flips the passed AtomicBool. Called at most
+/// once per process (OnceLock only takes the first `stop`).
+fn install_signal_handler(stop: Arc<AtomicBool>) {
     static STOP_PTR: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
     let _ = STOP_PTR.set(stop);
 
@@ -144,10 +135,9 @@ fn install_signal_handler(stop: Arc<AtomicBool>) -> Result<()> {
         }
     }
 
-    // SAFETY: async-signal-safe (single atomic store)
+    // SAFETY: the handler is async-signal-safe (a single relaxed atomic store).
     unsafe {
         libc::signal(libc::SIGINT, handler as *const () as libc::sighandler_t);
         libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t);
     }
-    Ok(())
 }

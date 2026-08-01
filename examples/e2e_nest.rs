@@ -73,8 +73,14 @@ fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    let host = args.get(1).cloned().unwrap_or_else(|| "192.168.238.100".into());
     let no_rtcp = args.iter().any(|a| a == "--no-rtcp");
+    // First positional non-flag arg is the host; default is the local Nest Mini.
+    let host = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .unwrap_or_else(|| "192.168.238.100".into());
 
     make_tone_wav(tone)?;
 

@@ -11,8 +11,8 @@
 //! Reference: <https://chromium.googlesource.com/openscreen/+/main/cast/streaming/>
 
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -48,7 +48,9 @@ pub struct CastRtpSender {
     dest: (String, u16),
     frame_id: u32,
     octet_count: u64,
-    stop: Arc<AtomicBool>,
+    /// (bool, Condvar) → RTCP thread waits with wait_timeout on the condvar;
+    /// stop() flips the bool and notifies. Mirrors the Python `threading.Event`.
+    stop: Arc<(Mutex<bool>, Condvar)>,
     // Shared with the RTCP thread; updated on every send.
     shared_frame_id: Arc<AtomicU32>,
     shared_octets: Arc<AtomicU64>,
@@ -65,7 +67,7 @@ impl CastRtpSender {
             dest,
             frame_id: 0,
             octet_count: 0,
-            stop: Arc::new(AtomicBool::new(false)),
+            stop: Arc::new((Mutex::new(false), Condvar::new())),
             shared_frame_id: Arc::new(AtomicU32::new(0)),
             shared_octets: Arc::new(AtomicU64::new(0)),
             rtcp_thread: None,
@@ -75,8 +77,8 @@ impl CastRtpSender {
     fn nonce(&self, frame_id: u32) -> [u8; 16] {
         let mut nonce = [0u8; 16];
         nonce[8..12].copy_from_slice(&frame_id.to_be_bytes());
-        for i in 0..16 {
-            nonce[i] ^= self.config.aes_iv_mask[i];
+        for (n, m) in nonce.iter_mut().zip(self.config.aes_iv_mask.iter()) {
+            *n ^= m;
         }
         nonce
     }
@@ -154,19 +156,23 @@ impl CastRtpSender {
         self.rtcp_thread = Some(std::thread::Builder::new()
             .name("rtcp-sender".into())
             .spawn(move || {
-                while !stop.load(Ordering::Relaxed) {
+                let (lock, cvar) = &*stop;
+                loop {
                     let fid = shared_frame_id.load(Ordering::Relaxed);
                     let octets = shared_octets.load(Ordering::Relaxed);
                     let sr = build_rtcp_sr(ssrc, fid, octets);
                     if let Err(e) = socket.send_to(&sr, &dest) {
                         log::debug!("RTCP send error: {e}");
                     }
-                    // Coarse but adequate; wakes fast enough for graceful stop
-                    for _ in 0..10 {
-                        if stop.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(50));
+                    let guard = lock.lock().expect("stop mutex");
+                    if *guard {
+                        break;
+                    }
+                    let (guard, _) = cvar
+                        .wait_timeout(guard, Duration::from_millis(500))
+                        .expect("cvar wait");
+                    if *guard {
+                        break;
                     }
                 }
             })
@@ -175,7 +181,12 @@ impl CastRtpSender {
     }
 
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        {
+            let (lock, cvar) = &*self.stop;
+            let mut stopped = lock.lock().expect("stop mutex");
+            *stopped = true;
+            cvar.notify_all();
+        }
         if let Some(t) = self.rtcp_thread.take() {
             let _ = t.join();
         }
@@ -184,11 +195,15 @@ impl CastRtpSender {
             self.frame_id, self.octet_count
         );
     }
+
+    fn is_stopped(&self) -> bool {
+        *self.stop.0.lock().expect("stop mutex")
+    }
 }
 
 impl Drop for CastRtpSender {
     fn drop(&mut self) {
-        if !self.stop.load(Ordering::Relaxed) {
+        if !self.is_stopped() {
             self.stop();
         }
     }
@@ -272,7 +287,9 @@ mod tests {
         let n = s.nonce(1);
         let mut expected = [0u8; 16];
         expected[11] = 1;
-        for i in 0..16 { expected[i] ^= 0x11; }
+        for b in &mut expected {
+            *b ^= 0x11;
+        }
         assert_eq!(n, expected);
     }
 

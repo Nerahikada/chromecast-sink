@@ -33,7 +33,11 @@ pub const PLATFORM: &str = "receiver-0";
 pub const SENDER_LOCAL: &str = "sender-0";
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// Read poll interval for the dispatcher loop.
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
+/// Long timeout for the TLS handshake itself — must not be as tight as the
+/// dispatcher's read poll, or a slow handshake looks like an aborted read.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A parsed CastMessage.
 #[derive(Debug, Clone)]
@@ -97,9 +101,13 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
         .build()?;
     let tcp = TcpStream::connect((host, 8009))
         .with_context(|| format!("TCP connect to {host}:8009"))?;
-    tcp.set_read_timeout(Some(READ_TIMEOUT))?;
+    // Handshake needs headroom for multiple TLS round-trips.
+    tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut tls = connector.connect(host, tcp).context("TLS handshake")?;
+    // After the handshake, drop to a short poll interval so the dispatcher
+    // loop wakes quickly to check `stop` and drain the outbound queue.
+    tls.get_ref().set_read_timeout(Some(READ_TIMEOUT))?;
 
     let (outbound_tx, outbound_rx) = mpsc::channel::<CastMessage>();
     let (incoming_tx, incoming_rx) = mpsc::channel::<CastMessage>();
@@ -164,17 +172,21 @@ fn dispatcher(
             let body: Vec<u8> = acc.drain(..len).collect();
             match decode_cast_message(&body) {
                 Ok(msg) => {
-                    if msg.namespace == NS_HEARTBEAT && msg.payload.contains("\"PING\"") {
-                        // reply inline
-                        let pong = CastMessage {
-                            source: SENDER_LOCAL.into(),
-                            destination: msg.source.clone(),
-                            namespace: NS_HEARTBEAT.into(),
-                            payload: r#"{"type":"PONG"}"#.into(),
-                        };
-                        let _ = write_message(&mut tls, &pong);
+                    if msg.namespace == NS_HEARTBEAT {
+                        // Auto-PONG to PINGs. Never forward heartbeat traffic
+                        // to the caller — it is dispatcher-internal noise.
+                        if msg.payload.contains(r#""type":"PING""#) {
+                            let pong = CastMessage {
+                                source: SENDER_LOCAL.into(),
+                                destination: msg.source.clone(),
+                                namespace: NS_HEARTBEAT.into(),
+                                payload: r#"{"type":"PONG"}"#.into(),
+                            };
+                            let _ = write_message(&mut tls, &pong);
+                        }
+                    } else {
+                        let _ = incoming.send(msg);
                     }
-                    let _ = incoming.send(msg);
                 }
                 Err(e) => log::warn!("CastMessage decode failed: {e}"),
             }
@@ -249,7 +261,8 @@ fn write_string(buf: &mut Vec<u8>, tag: u32, s: &str) {
 }
 
 fn write_varint_field(buf: &mut Vec<u8>, tag: u32, v: u64) {
-    write_varint(buf, ((tag as u64) << 3) | 0);
+    // wire_type 0 (varint) — the `| 0` is elided
+    write_varint(buf, (tag as u64) << 3);
     write_varint(buf, v);
 }
 

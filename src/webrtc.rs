@@ -87,7 +87,7 @@ pub fn launch_mirroring(
 
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let remaining = deadline - Instant::now();
+        let remaining = deadline.saturating_duration_since(Instant::now());
         let msg = match incoming.recv_timeout(remaining.min(Duration::from_millis(500))) {
             Ok(m) => m,
             Err(_) => continue,
@@ -132,7 +132,7 @@ pub fn send_offer(
     offer: &StreamOffer,
     timeout: Duration,
 ) -> Result<StreamAnswer> {
-    let seq_num = (new_request_id() as u32) as i64;
+    let seq_num = new_request_id() as i64;
     let payload = json!({
         "type": "OFFER",
         "seqNum": seq_num,
@@ -163,7 +163,7 @@ pub fn send_offer(
 
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        let remaining = deadline - Instant::now();
+        let remaining = deadline.saturating_duration_since(Instant::now());
         let msg = match incoming.recv_timeout(remaining.min(Duration::from_millis(500))) {
             Ok(m) => m,
             Err(_) => continue,
