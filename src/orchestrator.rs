@@ -12,10 +12,9 @@ use crate::cast_rtp::{self, CastRtpSender};
 use crate::castv2::{self, CastMessage, NS_CONNECTION};
 use crate::discovery::{self, Device};
 use crate::virtual_sink::VirtualSink;
-use crate::webrtc::{self, StreamOffer};
+use crate::webrtc::{self, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-const OPUS_BITRATE: i32 = 128_000;
 
 pub fn run(device_name: Option<&str>) -> Result<()> {
     // Phase 1: discover
@@ -50,7 +49,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     // Phase 5: launch mirroring receiver
     println!("Launching mirroring receiver...");
-    let (_app_id, transport) =
+    let transport =
         webrtc::launch_mirroring(&channel, &incoming, device.is_audio_only, TIMEOUT)?;
     channel.connect_transport(&transport)?;
 
@@ -58,8 +57,8 @@ pub fn run_with_device(device: Device) -> Result<()> {
     let offer = StreamOffer::default();
     println!(
         "Negotiating stream (Opus {}kbps, target delay {}ms)...",
-        offer.bit_rate / 1000,
-        offer.target_delay_ms
+        OPUS_BITRATE / 1000,
+        TARGET_DELAY_MS,
     );
     let answer = webrtc::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
     if !answer.send_indexes.contains(&0) {
@@ -75,7 +74,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
         chromecast_host: device.host.clone(),
         udp_port: answer.udp_port,
         ssrc: offer.ssrc,
-        payload_type: offer.rtp_payload_type,
+        payload_type: RTP_PAYLOAD_TYPE,
         aes_key: offer.aes_key,
         aes_iv_mask: offer.aes_iv_mask,
     })
@@ -84,7 +83,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     // Phase 8: shutdown coordination
     let stop = Arc::new(AtomicBool::new(false));
-    install_signal_handler(Arc::clone(&stop));
+    install_signal_handler(&stop)?;
 
     // Watch the Cast channel: stop when the receiver CLOSEs our session
     // (e.g. someone else starts casting) or the TLS connection dies. Without
@@ -106,10 +105,11 @@ pub fn run_with_device(device: Device) -> Result<()> {
         OPUS_BITRATE,
     );
 
-    // Cleanup in reverse order. Closing the channel drops the dispatcher and
-    // with it the incoming sender, which unblocks the session monitor.
+    // Cleanup in reverse order. Dropping the channel joins the dispatcher and
+    // drops its incoming sender, which unblocks the session monitor. This
+    // must happen before `monitor.join()` or the join deadlocks.
     sender.stop();
-    channel.close();
+    drop(channel);
     let _ = monitor.join();
     drop(sink); // pipewire node destroyed here
     capture_result
@@ -125,31 +125,21 @@ fn spawn_session_monitor(
     std::thread::Builder::new()
         .name("session-monitor".into())
         .spawn(move || {
-            loop {
-                match incoming.recv() {
-                    Ok(msg) => {
-                        if msg.namespace == NS_CONNECTION
-                            && msg.source == transport
-                            && msg.payload.contains(r#""CLOSE""#)
-                        {
-                            if !stop.load(Ordering::Relaxed) {
-                                eprintln!("\nReceiver closed the mirroring session; shutting down.");
-                            }
-                            stop.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        log::debug!("cast rx [{}] {}", msg.namespace, msg.payload);
-                    }
-                    Err(_) => {
-                        // Dispatcher gone: normal during our own shutdown,
-                        // otherwise the connection to the device was lost.
-                        if !stop.load(Ordering::Relaxed) {
-                            eprintln!("\nConnection to Chromecast lost; shutting down.");
-                        }
-                        stop.store(true, Ordering::Relaxed);
-                        break;
-                    }
+            // Default reason applies when `recv()` errors (dispatcher gone:
+            // either our own shutdown, or the TLS socket died).
+            let mut reason = "Connection to Chromecast lost";
+            while let Ok(msg) = incoming.recv() {
+                if msg.namespace == NS_CONNECTION
+                    && msg.source == transport
+                    && msg.payload.contains(r#""CLOSE""#)
+                {
+                    reason = "Receiver closed the mirroring session";
+                    break;
                 }
+                log::debug!("cast rx [{}] {}", msg.namespace, msg.payload);
+            }
+            if !stop.swap(true, Ordering::Relaxed) {
+                eprintln!("\n{reason}; shutting down.");
             }
         })
         .expect("spawn session monitor")
@@ -168,21 +158,12 @@ fn pick_device(mut devices: Vec<Device>) -> Result<Device> {
     bail!("device selection required")
 }
 
-/// SIGINT/SIGTERM handler that flips the passed AtomicBool. Called at most
-/// once per process (OnceLock only takes the first `stop`).
-fn install_signal_handler(stop: Arc<AtomicBool>) {
-    static STOP_PTR: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
-    let _ = STOP_PTR.set(stop);
-
-    extern "C" fn handler(_: libc::c_int) {
-        if let Some(s) = STOP_PTR.get() {
-            s.store(true, Ordering::Relaxed);
-        }
-    }
-
-    // SAFETY: the handler is async-signal-safe (a single relaxed atomic store).
-    unsafe {
-        libc::signal(libc::SIGINT, handler as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t);
-    }
+/// SIGINT/SIGTERM handler that flips the passed AtomicBool. `ctrlc` installs
+/// a dedicated handler thread (using `sigaction` on Unix, not the BSD-quirky
+/// `signal(2)`), and its `termination` feature adds SIGTERM alongside SIGINT.
+/// Only callable once per process — a second `run()` would return an error.
+fn install_signal_handler(stop: &Arc<AtomicBool>) -> Result<()> {
+    let flag = Arc::clone(stop);
+    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
+        .context("install SIGINT/SIGTERM handler")
 }

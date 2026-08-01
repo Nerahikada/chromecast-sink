@@ -19,17 +19,24 @@ use crate::castv2::{
 pub const APP_MIRRORING_AUDIO_VIDEO: &str = "0F5096E8";
 pub const APP_MIRRORING_AUDIO_ONLY: &str = "85CDB22F";
 
-/// Offered audio stream parameters.
+// Wire-fixed offer parameters. These are constants because no caller has any
+// business overriding them: the encoder (`opus_enc`) and the RTP layer
+// choice (LowDelay + 10ms Opus, `targetDelay=0`, PT=127).
+pub const OPUS_CODEC: &str = "opus";
+pub const OPUS_SAMPLE_RATE: u32 = 48_000;
+pub const OPUS_CHANNELS: u32 = 2;
+pub const OPUS_BITRATE: i32 = 128_000;
+pub const RTP_PAYLOAD_TYPE: u8 = 127;
+/// Target playout delay in ms. `0` is intentional (not "device default" —
+pub const TARGET_DELAY_MS: u32 = 0;
+
+/// Per-session state offered to the receiver. Everything else about the
+/// audio stream (codec/rate/channels/bitrate/PT/target-delay) is fixed —
+/// see the `OPUS_*` / `RTP_*` / `TARGET_DELAY_MS` constants above.
 pub struct StreamOffer {
     pub ssrc: u32,
     pub aes_key: [u8; 16],
     pub aes_iv_mask: [u8; 16],
-    pub codec: &'static str,
-    pub sample_rate: u32,
-    pub channels: u32,
-    pub bit_rate: i32,
-    pub rtp_payload_type: u8,
-    pub target_delay_ms: u32,
 }
 
 impl Default for StreamOffer {
@@ -43,12 +50,6 @@ impl Default for StreamOffer {
             ssrc: rng.next_u32() & 0x7FFF_FFFF | 1,
             aes_key,
             aes_iv_mask,
-            codec: "opus",
-            sample_rate: 48_000,
-            channels: 2,
-            bit_rate: 128_000,
-            rtp_payload_type: 127,
-            target_delay_ms: 0,
         }
     }
 }
@@ -58,13 +59,13 @@ pub struct StreamAnswer {
     pub send_indexes: Vec<u64>,
 }
 
-/// Launch the mirroring receiver app and return `(app_id, transport_id)`.
+/// Launch the mirroring receiver app and return its `transport_id`.
 pub fn launch_mirroring(
     channel: &CastChannel,
     incoming: &Receiver<CastMessage>,
     is_audio_only: bool,
     timeout: Duration,
-) -> Result<(String, String)> {
+) -> Result<String> {
     let app_id = if is_audio_only {
         APP_MIRRORING_AUDIO_ONLY
     } else {
@@ -85,43 +86,31 @@ pub fn launch_mirroring(
         }),
     )?;
 
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let msg = match incoming.recv_timeout(remaining.min(Duration::from_millis(500))) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if msg.namespace != NS_RECEIVER {
-            continue;
-        }
-        let v: Value = match serde_json::from_str(&msg.payload) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+    wait_for_json_message(incoming, NS_RECEIVER, Instant::now() + timeout, |v| {
         // RECEIVER_STATUS: {applications: [{appId, transportId, sessionId, ...}]}
-        if v.get("type").and_then(|t| t.as_str()) == Some("RECEIVER_STATUS") {
-            if let Some(apps) = v.pointer("/status/applications").and_then(|a| a.as_array()) {
-                for app in apps {
-                    if app.get("appId").and_then(|s| s.as_str()) == Some(app_id) {
-                        let transport = app
-                            .get("transportId")
-                            .and_then(|s| s.as_str())
-                            .ok_or_else(|| anyhow!("no transportId"))?
-                            .to_string();
-                        log::info!("Mirroring app ready (transport {transport})");
-                        // Give it a moment to fully initialize
-                        std::thread::sleep(Duration::from_millis(500));
-                        return Ok((app_id.to_string(), transport));
-                    }
-                }
-            }
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("RECEIVER_STATUS") => v
+                .pointer("/status/applications")
+                .and_then(|a| a.as_array())
+                .and_then(|apps| {
+                    apps.iter().find(|app| {
+                        app.get("appId").and_then(|s| s.as_str()) == Some(app_id)
+                    })
+                })
+                .map(|app| {
+                    let transport = app
+                        .get("transportId")
+                        .and_then(|s| s.as_str())
+                        .ok_or_else(|| anyhow!("no transportId"))?
+                        .to_string();
+                    log::info!("Mirroring app {app_id} ready (transport {transport})");
+                    Ok(transport)
+                }),
+            Some("LAUNCH_ERROR") => Some(Err(anyhow!("Receiver rejected LAUNCH: {v}"))),
+            _ => None,
         }
-        if v.get("type").and_then(|t| t.as_str()) == Some("LAUNCH_ERROR") {
-            bail!("Receiver rejected LAUNCH: {}", msg.payload);
-        }
-    }
-    bail!("Timeout launching mirroring app")
+    })
+    .context("Timeout launching mirroring app")
 }
 
 /// Send OFFER on the webrtc namespace to `transport_id` and wait for ANSWER.
@@ -141,57 +130,85 @@ pub fn send_offer(
             "supportedStreams": [{
                 "index": 0,
                 "type": "audio_source",
-                "codecName": offer.codec,
+                "codecName": OPUS_CODEC,
                 "rtpProfile": "cast",
-                "rtpPayloadType": offer.rtp_payload_type,
+                "rtpPayloadType": RTP_PAYLOAD_TYPE,
                 "ssrc": offer.ssrc,
-                "targetDelay": offer.target_delay_ms,
+                "targetDelay": TARGET_DELAY_MS,
                 "aesKey": hex::encode(offer.aes_key),
                 "aesIvMask": hex::encode(offer.aes_iv_mask),
-                "timeBase": format!("1/{}", offer.sample_rate),
-                "bitRate": offer.bit_rate,
-                "sampleRate": offer.sample_rate,
-                "channels": offer.channels,
+                "timeBase": format!("1/{}", OPUS_SAMPLE_RATE),
+                "bitRate": OPUS_BITRATE,
+                "sampleRate": OPUS_SAMPLE_RATE,
+                "channels": OPUS_CHANNELS,
             }],
         },
     });
     log::info!(
-        "Sending OFFER (seqNum={seq_num}, ssrc={}, targetDelay={}ms)",
-        offer.ssrc, offer.target_delay_ms
+        "Sending OFFER (seqNum={seq_num}, ssrc={}, targetDelay={TARGET_DELAY_MS}ms)",
+        offer.ssrc
     );
     channel.send_json(transport_id, NS_WEBRTC, &payload)?;
 
-    let deadline = Instant::now() + timeout;
+    wait_for_json_message(incoming, NS_WEBRTC, Instant::now() + timeout, |v| {
+        if v.get("type").and_then(|t| t.as_str()) != Some("ANSWER") {
+            return None;
+        }
+        Some(parse_answer(v))
+    })
+    .context("Timeout waiting for ANSWER from Chromecast")
+}
+
+fn parse_answer(v: &Value) -> Result<StreamAnswer> {
+    if v.get("result").and_then(|r| r.as_str()) != Some("ok") {
+        bail!("OFFER rejected: {v}");
+    }
+    let ans = v.get("answer").ok_or_else(|| anyhow!("no `answer` field"))?;
+    let udp_port = ans
+        .get("udpPort")
+        .and_then(|p| p.as_u64())
+        .ok_or_else(|| anyhow!("no udpPort"))? as u16;
+    let send_indexes = ans
+        .get("sendIndexes")
+        .and_then(|s| s.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    log::info!("ANSWER received: udpPort={udp_port}, sendIndexes={send_indexes:?}");
+    Ok(StreamAnswer { udp_port, send_indexes })
+}
+
+/// Wait for a JSON message on `namespace` matching `predicate`, up to `deadline`.
+/// The predicate returns:
+///   - `None` — not the message we want, keep waiting.
+///   - `Some(Ok(t))` — success, return `t`.
+///   - `Some(Err(e))` — terminal error observed in the reply, bail with `e`.
+///
+/// Non-JSON payloads on the target namespace are silently dropped (the receiver
+/// occasionally interleaves other messages we don't care about).
+fn wait_for_json_message<T>(
+    rx: &Receiver<CastMessage>,
+    namespace: &str,
+    deadline: Instant,
+    mut predicate: impl FnMut(&Value) -> Option<Result<T>>,
+) -> Result<T> {
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let msg = match incoming.recv_timeout(remaining.min(Duration::from_millis(500))) {
+        let msg = match rx.recv_timeout(remaining.min(Duration::from_millis(500))) {
             Ok(m) => m,
             Err(_) => continue,
         };
-        if msg.namespace != NS_WEBRTC {
+        if msg.namespace != namespace {
             continue;
         }
-        let v: Value = serde_json::from_str(&msg.payload).context("decode webrtc payload")?;
-        if v.get("type").and_then(|t| t.as_str()) != Some("ANSWER") {
-            continue;
+        let v: Value = match serde_json::from_str(&msg.payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(result) = predicate(&v) {
+            return result;
         }
-        if v.get("result").and_then(|r| r.as_str()) != Some("ok") {
-            bail!("OFFER rejected: {}", msg.payload);
-        }
-        let ans = v.get("answer").ok_or_else(|| anyhow!("no `answer` field"))?;
-        let udp_port = ans
-            .get("udpPort")
-            .and_then(|p| p.as_u64())
-            .ok_or_else(|| anyhow!("no udpPort"))? as u16;
-        let send_indexes = ans
-            .get("sendIndexes")
-            .and_then(|s| s.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_u64()).collect::<Vec<_>>())
-            .unwrap_or_default();
-        log::info!("ANSWER received: udpPort={udp_port}, sendIndexes={send_indexes:?}");
-        return Ok(StreamAnswer { udp_port, send_indexes });
     }
-    bail!("Timeout waiting for ANSWER from Chromecast")
+    bail!("deadline reached")
 }
 
 fn new_request_id() -> u64 {

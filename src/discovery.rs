@@ -40,7 +40,7 @@ impl Device {
 fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
     match ca {
         Some(bits) => bits & CA_VIDEO_OUT == 0,
-        None => model.map(is_audio_only_model).unwrap_or(false),
+        None => model.is_some_and(is_audio_only_model),
     }
 }
 
@@ -71,19 +71,12 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 for prop in info.get_properties().iter() {
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
                 }
-                let host = info
-                    .get_addresses_v4()
-                    .iter()
-                    .next()
-                    .map(|ip| ip.to_string())
-                    .unwrap_or_default();
-                if host.is_empty() {
+                let Some(ip) = info.get_addresses_v4().iter().next().copied() else {
                     continue;
-                }
-                if let Some(dev) = Device::from_txt(host, &txt) {
+                };
+                if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
                     let matched_wanted = wanted_name
-                        .map(|n| n.eq_ignore_ascii_case(&dev.friendly_name))
-                        .unwrap_or(false);
+                        .is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
                     devices.insert(dev.friendly_name.clone(), dev);
                     if matched_wanted {
                         break;

@@ -94,19 +94,6 @@ fn run_pw_thread(
 ) {
     pw::init();
 
-    let mainloop = match MainLoop::new(None) {
-        Ok(m) => m,
-        Err(e) => { let _ = ready_tx.send(Err(anyhow::anyhow!("MainLoop: {e}"))); return; }
-    };
-    let context = match pw::context::Context::new(&mainloop) {
-        Ok(c) => c,
-        Err(e) => { let _ = ready_tx.send(Err(anyhow::anyhow!("Context: {e}"))); return; }
-    };
-    let core = match context.connect(None) {
-        Ok(c) => c,
-        Err(e) => { let _ = ready_tx.send(Err(anyhow::anyhow!("Connect: {e}"))); return; }
-    };
-
     let props = properties! {
         "factory.name" => "support.null-audio-sink",
         "node.name" => sink_name.as_str(),
@@ -121,18 +108,22 @@ fn run_pw_thread(
     };
 
     // The proxy MUST outlive the main loop — dropping it destroys the node on
-    // the server. Since Node isn't Send, we keep it on this thread.
-    let node = match core.create_object::<Node>("adapter", &props) {
-        Ok(n) => n,
-        Err(e) => { let _ = ready_tx.send(Err(anyhow::anyhow!("create_object: {e}"))); return; }
-    };
-
-    // Roundtrip so the server has actually processed the create before we
-    // signal readiness (otherwise pulse-simple may race and fail to open the
-    // monitor). See examples/roundtrip.rs in pipewire-rs.
-    let sync_seq = match core.sync(0) {
-        Ok(s) => s,
-        Err(e) => { let _ = ready_tx.send(Err(anyhow::anyhow!("sync: {e}"))); return; }
+    // the server. Since Node isn't Send, everything stays on this thread; the
+    // closure just lets us `?` through the init sequence.
+    // The roundtrip (`core.sync(0)`) ensures the server has actually processed
+    // the create before we signal readiness (otherwise pulse-simple may race
+    // and fail to open the monitor). See examples/roundtrip.rs in pipewire-rs.
+    let init: Result<_> = (|| {
+        let mainloop = MainLoop::new(None).context("MainLoop")?;
+        let context = pw::context::Context::new(&mainloop).context("Context")?;
+        let core = context.connect(None).context("Connect")?;
+        let node = core.create_object::<Node>("adapter", &props).context("create_object")?;
+        let sync_seq = core.sync(0).context("sync")?;
+        Ok((mainloop, context, core, node, sync_seq))
+    })();
+    let (mainloop, _context, core, node, sync_seq) = match init {
+        Ok(v) => v,
+        Err(e) => { let _ = ready_tx.send(Err(e)); return; }
     };
 
     let signalled = Rc::new(Cell::new(false));

@@ -11,8 +11,9 @@
 //! Reference: <https://chromium.googlesource.com/openscreen/+/main/cast/streaming/>
 
 use std::net::UdpSocket;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -46,14 +47,12 @@ pub struct CastRtpSender {
     config: Config,
     socket: Arc<UdpSocket>,
     dest: (String, u16),
-    frame_id: u32,
-    octet_count: u64,
-    /// (bool, Condvar) → RTCP thread waits with wait_timeout on the condvar;
-    /// stop() flips the bool and notifies. Mirrors the Python `threading.Event`.
-    stop: Arc<(Mutex<bool>, Condvar)>,
-    // Shared with the RTCP thread; updated on every send.
-    shared_frame_id: Arc<AtomicU32>,
-    shared_octets: Arc<AtomicU64>,
+    /// Sole storage for the counters. `send_frame` (single writer, `&mut self`)
+    /// updates them; the RTCP thread and `StatsHandle` read them.
+    frame_id: Arc<AtomicU32>,
+    octet_count: Arc<AtomicU64>,
+    /// Dropping this wakes the RTCP thread with `Disconnected` and it exits.
+    stop_tx: Option<mpsc::Sender<()>>,
     rtcp_thread: Option<JoinHandle<()>>,
 }
 
@@ -65,11 +64,9 @@ impl CastRtpSender {
             config,
             socket: Arc::new(socket),
             dest,
-            frame_id: 0,
-            octet_count: 0,
-            stop: Arc::new((Mutex::new(false), Condvar::new())),
-            shared_frame_id: Arc::new(AtomicU32::new(0)),
-            shared_octets: Arc::new(AtomicU64::new(0)),
+            frame_id: Arc::new(AtomicU32::new(0)),
+            octet_count: Arc::new(AtomicU64::new(0)),
+            stop_tx: None,
             rtcp_thread: None,
         })
     }
@@ -117,93 +114,89 @@ impl CastRtpSender {
     }
 
     pub fn send_frame(&mut self, opus_frame: &[u8]) -> std::io::Result<()> {
-        let enc = self.encrypt(opus_frame, self.frame_id);
-        let pkt = self.build_packet(&enc, self.frame_id);
+        // `&mut self` guarantees a single writer, so a load+store here is
+        // race-free relative to other writers; the RTCP thread only reads.
+        let fid = self.frame_id.load(Ordering::Relaxed);
+        let enc = self.encrypt(opus_frame, fid);
+        let pkt = self.build_packet(&enc, fid);
         self.socket.send_to(&pkt, &self.dest)?;
 
-        self.frame_id = self.frame_id.wrapping_add(1);
-        self.octet_count = self.octet_count.wrapping_add(opus_frame.len() as u64);
-        self.shared_frame_id.store(self.frame_id, Ordering::Relaxed);
-        self.shared_octets.store(self.octet_count, Ordering::Relaxed);
+        self.frame_id.store(fid.wrapping_add(1), Ordering::Relaxed);
+        self.octet_count
+            .fetch_add(opus_frame.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
     /// Snapshot of frames-sent and total payload bytes (useful for diagnostics).
     #[cfg(test)]
     pub fn stats(&self) -> (u32, u64) {
-        (self.frame_id, self.octet_count)
+        (
+            self.frame_id.load(Ordering::Relaxed),
+            self.octet_count.load(Ordering::Relaxed),
+        )
     }
 
     /// Handle for reading live counters from another thread. The counters
-    /// are updated on every `send_frame` and by the RTCP thread.
+    /// are updated on every `send_frame`.
     pub fn stats_handle(&self) -> StatsHandle {
         StatsHandle {
-            frame_id: Arc::clone(&self.shared_frame_id),
-            octet_count: Arc::clone(&self.shared_octets),
+            frame_id: Arc::clone(&self.frame_id),
+            octet_count: Arc::clone(&self.octet_count),
         }
     }
 
     /// Spawn the 500 ms RTCP Sender Report thread. Required for the receiver
     /// to keep the mirroring app alive.
     pub fn start(&mut self) {
-        let stop = Arc::clone(&self.stop);
+        let (tx, rx) = mpsc::channel::<()>();
         let socket = Arc::clone(&self.socket);
         let dest = self.dest.clone();
         let ssrc = self.config.ssrc;
-        let shared_frame_id = Arc::clone(&self.shared_frame_id);
-        let shared_octets = Arc::clone(&self.shared_octets);
+        let frame_id = Arc::clone(&self.frame_id);
+        let octet_count = Arc::clone(&self.octet_count);
 
-        self.rtcp_thread = Some(std::thread::Builder::new()
-            .name("rtcp-sender".into())
-            .spawn(move || {
-                let (lock, cvar) = &*stop;
-                loop {
-                    let fid = shared_frame_id.load(Ordering::Relaxed);
-                    let octets = shared_octets.load(Ordering::Relaxed);
-                    let sr = build_rtcp_sr(ssrc, fid, octets);
-                    if let Err(e) = socket.send_to(&sr, &dest) {
-                        log::debug!("RTCP send error: {e}");
+        self.stop_tx = Some(tx);
+        self.rtcp_thread = Some(
+            std::thread::Builder::new()
+                .name("rtcp-sender".into())
+                .spawn(move || {
+                    loop {
+                        let fid = frame_id.load(Ordering::Relaxed);
+                        let octets = octet_count.load(Ordering::Relaxed);
+                        let sr = build_rtcp_sr(ssrc, fid, octets);
+                        if let Err(e) = socket.send_to(&sr, &dest) {
+                            log::debug!("RTCP send error: {e}");
+                        }
+                        // Timeout → keep looping (send next SR).
+                        // Disconnected (sender dropped) or a stray Ok → shut down.
+                        match rx.recv_timeout(Duration::from_millis(500)) {
+                            Err(RecvTimeoutError::Timeout) => continue,
+                            _ => break,
+                        }
                     }
-                    let guard = lock.lock().expect("stop mutex");
-                    if *guard {
-                        break;
-                    }
-                    let (guard, _) = cvar
-                        .wait_timeout(guard, Duration::from_millis(500))
-                        .expect("cvar wait");
-                    if *guard {
-                        break;
-                    }
-                }
-            })
-            .expect("spawn rtcp thread"));
+                })
+                .expect("spawn rtcp thread"),
+        );
         log::info!("Cast RTP started (RTCP interval=500ms)");
     }
 
     pub fn stop(&mut self) {
-        {
-            let (lock, cvar) = &*self.stop;
-            let mut stopped = lock.lock().expect("stop mutex");
-            *stopped = true;
-            cvar.notify_all();
-        }
+        // Dropping the sender wakes the RTCP thread with `Disconnected`.
+        self.stop_tx = None;
         if let Some(t) = self.rtcp_thread.take() {
             let _ = t.join();
         }
         log::info!(
             "Cast RTP sender stopped (sent {} packets, {} bytes)",
-            self.frame_id, self.octet_count
+            self.frame_id.load(Ordering::Relaxed),
+            self.octet_count.load(Ordering::Relaxed),
         );
-    }
-
-    fn is_stopped(&self) -> bool {
-        *self.stop.0.lock().expect("stop mutex")
     }
 }
 
 impl Drop for CastRtpSender {
     fn drop(&mut self) {
-        if !self.is_stopped() {
+        if self.rtcp_thread.is_some() {
             self.stop();
         }
     }

@@ -18,11 +18,10 @@ use chromecast_sink::{
     cast_rtp::{self, CastRtpSender, StatsHandle},
     castv2,
     virtual_sink::VirtualSink,
-    webrtc::{self, StreamOffer},
+    webrtc::{self, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE},
 };
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-const OPUS_BITRATE: i32 = 128_000;
 
 fn snapshot(stats: &StatsHandle, label: &str) -> f64 {
     let (f0, o0) = stats.snapshot();
@@ -94,7 +93,7 @@ fn main() -> Result<()> {
 
     println!("Connecting to {host}...");
     let (channel, incoming) = castv2::connect(&host)?;
-    let (_app, transport) = webrtc::launch_mirroring(&channel, &incoming, true, TIMEOUT)?;
+    let transport = webrtc::launch_mirroring(&channel, &incoming, true, TIMEOUT)?;
     channel.connect_transport(&transport)?;
 
     let offer = StreamOffer::default();
@@ -106,7 +105,7 @@ fn main() -> Result<()> {
         chromecast_host: host.clone(),
         udp_port: answer.udp_port,
         ssrc: offer.ssrc,
-        payload_type: offer.rtp_payload_type,
+        payload_type: RTP_PAYLOAD_TYPE,
         aes_key: offer.aes_key,
         aes_iv_mask: offer.aes_iv_mask,
     })?;

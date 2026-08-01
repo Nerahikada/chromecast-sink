@@ -11,7 +11,6 @@
 //! the receiver is answered with PONG inline; everything else is forwarded on
 //! a channel to the caller.
 
-use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,12 +74,6 @@ impl CastChannel {
         self.send_json(destination, NS_CONNECTION, &json!({"type": "CONNECT"}))
     }
 
-    pub fn close(mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
-    }
 }
 
 impl Drop for CastChannel {
@@ -143,7 +136,7 @@ fn dispatcher(
     stop: Arc<AtomicBool>,
 ) {
     let mut buf = vec![0u8; 8192];
-    let mut acc: VecDeque<u8> = VecDeque::new();
+    let mut acc: Vec<u8> = Vec::new();
     let mut last_ping = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
