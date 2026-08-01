@@ -7,10 +7,10 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 ## Requirements
 
 - **OS**: Linux with PipeWire (tested on Ubuntu 25.10, 26.04)
-- **Python**: 3.11+
-- **System packages**:
+- **Rust**: 1.75+ (only for building)
+- **System packages** (runtime + build):
   ```bash
-  sudo apt install libopus0 pulseaudio-utils pipewire
+  sudo apt install libopus-dev libpulse-dev libpipewire-0.3-dev libssl-dev libclang-dev pkg-config
   ```
 
 ## Installation
@@ -18,13 +18,13 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 ```bash
 git clone https://github.com/Nerahikada/chromecast-sink.git
 cd chromecast-sink
-pip install -e .
+cargo install --path .
 ```
 
 ## Usage
 
 ```bash
-# Stream to the only device found, or pick from a menu
+# Stream to the only device found, or list them and ask for --device
 chromecast-sink
 
 # Specify device by name
