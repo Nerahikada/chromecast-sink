@@ -6,7 +6,6 @@ import logging
 import signal
 import sys
 import threading
-from dataclasses import dataclass
 
 from chromecast_sink.audio_capture import run_capture
 from chromecast_sink.cast_rtp import CastRTPConfig, CastRTPSender
@@ -24,22 +23,15 @@ from chromecast_sink.webrtc_controller import (
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class Config:
-    """Runtime configuration from CLI arguments."""
-
-    device_name: str | None = None
-    timeout: float = 10
-    target_delay: int = 0
-    opus_bitrate: int = 128000
+# Fixed and empirically chosen; deliberately not CLI surface. The Opus bitrate
+TIMEOUT = 10.0
 
 
 class Orchestrator:
     """Manages the full lifecycle of the Chromecast audio bridge."""
 
-    def __init__(self, config: Config):
-        self.config = config
+    def __init__(self, device_name: str | None = None):
+        self.device_name = device_name
         self._sink_info: SinkInfo | None = None
         self._cast_rtp_sender: CastRTPSender | None = None
         self._capture_thread: threading.Thread | None = None
@@ -66,8 +58,8 @@ class Orchestrator:
         # Phase 1: Discover devices
         print("Discovering Chromecast devices...")
         self._discovery_result = discover_devices(
-            timeout=self.config.timeout,
-            device_name=self.config.device_name,
+            timeout=TIMEOUT,
+            device_name=self.device_name,
         )
 
         chromecasts = self._discovery_result.chromecasts
@@ -83,10 +75,15 @@ class Orchestrator:
             return 1
 
         # Phase 2: Select device
-        if len(chromecasts) == 1:
-            cast = chromecasts[0]
-        else:
-            cast = self._interactive_select(chromecasts)
+        if len(chromecasts) > 1:
+            print("Multiple devices found:", file=sys.stderr)
+            for cc in chromecasts:
+                info = cc.cast_info
+                model = f" ({info.model_name})" if info.model_name else ""
+                print(f"  - {info.friendly_name}{model}", file=sys.stderr)
+            print('Specify one with --device "NAME".', file=sys.stderr)
+            return 1
+        cast = chromecasts[0]
 
         device_name = cast.cast_info.friendly_name
         cast_host = str(cast.cast_info.host)
@@ -106,18 +103,15 @@ class Orchestrator:
 
         # Phase 5: Launch mirroring app
         print("Launching mirroring receiver...")
-        launch_mirroring_app(cast, timeout=self.config.timeout)
+        launch_mirroring_app(cast, timeout=TIMEOUT)
 
         # Phase 6: Send OFFER and wait for ANSWER
-        offer = StreamOffer(
-            bit_rate=self.config.opus_bitrate,
-            target_delay=self.config.target_delay,
-        )
+        offer = StreamOffer()
         print(
             f"Negotiating stream (Opus {offer.bit_rate // 1000}kbps, "
             f"target delay {offer.target_delay}ms)..."
         )
-        answer = webrtc.send_offer(offer, timeout=self.config.timeout)
+        answer = webrtc.send_offer(offer, timeout=TIMEOUT)
 
         if 0 not in answer.send_indexes:
             raise RuntimeError(
@@ -143,6 +137,7 @@ class Orchestrator:
         print("Starting audio capture...")
         self._capture_thread = threading.Thread(
             target=self._run_capture,
+            args=(offer.bit_rate,),
             daemon=True,
             name="capture",
         )
@@ -160,7 +155,7 @@ class Orchestrator:
         self._shutdown_event.wait()
         return 0
 
-    def _run_capture(self) -> None:
+    def _run_capture(self, bit_rate: int) -> None:
         """Capture loop body; a failure here must bring the process down."""
         assert self._sink_info is not None
         assert self._cast_rtp_sender is not None
@@ -169,30 +164,12 @@ class Orchestrator:
                 self._sink_info.monitor_source,
                 self._cast_rtp_sender,
                 self._shutdown_event,
-                bit_rate=self.config.opus_bitrate,
+                bit_rate=bit_rate,
             )
         except Exception as e:
             logger.error("Capture failed: %s", e, exc_info=True)
             print(f"\nCapture failed: {e}", file=sys.stderr)
             self._shutdown_event.set()
-
-    def _interactive_select(self, chromecasts) -> object:
-        """Present an interactive device selection menu."""
-        print(f"\nFound {len(chromecasts)} device(s):")
-        for i, cc in enumerate(chromecasts, 1):
-            info = cc.cast_info
-            model = f" ({info.model_name})" if info.model_name else ""
-            print(f"  {i}. {info.friendly_name}{model}")
-
-        while True:
-            try:
-                choice = input(f"\nSelect device [1-{len(chromecasts)}]: ").strip()
-                idx = int(choice) - 1
-                if 0 <= idx < len(chromecasts):
-                    return chromecasts[idx]
-            except (ValueError, EOFError):
-                pass
-            print(f"Please enter a number between 1 and {len(chromecasts)}.")
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""

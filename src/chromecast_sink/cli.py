@@ -9,17 +9,7 @@ import subprocess
 import sys
 
 from chromecast_sink import __version__, _opus, _pulse
-from chromecast_sink.orchestrator import Config, Orchestrator
-
-
-def _parse_bitrate(value: str) -> int:
-    """Parse bitrate string like '128k' into integer bps."""
-    value = value.strip().lower()
-    if value.endswith("k"):
-        return int(float(value[:-1]) * 1000)
-    if value.endswith("m"):
-        return int(float(value[:-1]) * 1000000)
-    return int(value)
+from chromecast_sink.orchestrator import Orchestrator
 
 
 def _check_dependencies() -> list[str]:
@@ -72,31 +62,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-d", "--device",
         metavar="NAME",
-        help="Connect to a specific device by name (skip interactive selection)",
-    )
-    parser.add_argument(
-        "--target-delay",
-        type=int,
-        default=0,
-        metavar="MS",
-        help=(
-            "Target playout delay in milliseconds (default: 0). "
-            "0 = minimum latency, higher = more buffer against dropouts. "
-            "Valid range: 0-5000."
-        ),
-    )
-    parser.add_argument(
-        "--opus-bitrate",
-        default="128k",
-        metavar="RATE",
-        help="Opus bitrate (default: 128k)",
-    )
-    parser.add_argument(
-        "-t", "--timeout",
-        type=float,
-        default=10,
-        metavar="SECS",
-        help="Device discovery timeout in seconds (default: 10)",
+        help="Connect to a specific device by name",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -127,16 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {err}", file=sys.stderr)
         return 1
 
-    # Build config and run
-    config = Config(
-        device_name=args.device,
-        timeout=args.timeout,
-        target_delay=args.target_delay,
-        opus_bitrate=_parse_bitrate(args.opus_bitrate),
-    )
-
-    orchestrator = Orchestrator(config)
-    return orchestrator.run()
+    return Orchestrator(device_name=args.device).run()
 
 
 if __name__ == "__main__":

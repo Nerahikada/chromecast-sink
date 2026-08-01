@@ -36,30 +36,6 @@ def _sanitize_sink_name(device_name: str) -> str:
     return f"chromecast_sink_{name}" if name else "chromecast_sink"
 
 
-def _find_pa_sink_name(node_name: str) -> str | None:
-    """Find the PulseAudio sink name for a PipeWire node by node.name."""
-    result = subprocess.run(
-        ["pactl", "-f", "json", "list", "sinks"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        return None
-
-    try:
-        sinks = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
-        return None
-
-    for sink in sinks:
-        name = sink.get("name", "")
-        props = sink.get("properties", {})
-        nn = props.get("node.name", "")
-        if name == node_name or nn == node_name:
-            return name
-
-    return None
-
-
 def _find_pw_node_id(node_name: str) -> int | None:
     """Find a PipeWire node ID by its node.name using pw-dump."""
     result = subprocess.run(
@@ -81,23 +57,6 @@ def _find_pw_node_id(node_name: str) -> int | None:
         if props.get("node.name") == node_name:
             return obj.get("id")
 
-    return None
-
-
-def _parse_pw_cli_node_id(output: str) -> int | None:
-    """Parse node ID from pw-cli create-node output.
-
-    Output format varies by PipeWire version:
-      "id: 42, type: PipeWire:Interface:Node/3"
-    or just:
-      "42"
-    """
-    match = re.search(r"id:\s*(\d+)", output)
-    if match:
-        return int(match.group(1))
-    stripped = output.strip()
-    if stripped.isdigit():
-        return int(stripped)
     return None
 
 
@@ -142,11 +101,6 @@ def cleanup_stale_sinks() -> None:
 def create_virtual_sink(device_name: str) -> SinkInfo:
     """Create a PipeWire null-audio-sink that appears in GNOME Sound Settings.
 
-    Uses pw-cli to create a native PipeWire node with the properties that
-    EasyEffects and similar apps use to make sinks visible in GNOME:
-      - node.virtual=false  — GNOME filters out virtual=true nodes
-      - device.class=sound  — WirePlumber exposes it as a real audio device
-
     The user selects this sink from Sound Settings when they want to cast.
 
     Args:
@@ -161,10 +115,6 @@ def create_virtual_sink(device_name: str) -> SinkInfo:
     sink_name = _sanitize_sink_name(device_name)
     description = f"Chromecast - {device_name}"
 
-    # Create a native PipeWire null-audio-sink via pw-cli.
-    # Key properties for GNOME visibility:
-    #   node.virtual=false  — GNOME filters out virtual=true
-    #   device.class=sound  — WirePlumber treats it as a real audio device
     props = (
         "{ "
         f"factory.name=support.null-audio-sink "
@@ -196,53 +146,31 @@ def create_virtual_sink(device_name: str) -> SinkInfo:
             "  systemctl --user status pipewire"
         )
 
-    # Try parsing node ID from stdout, then stderr (varies by PipeWire version)
-    node_id = _parse_pw_cli_node_id(result.stdout)
-    if node_id is None:
-        node_id = _parse_pw_cli_node_id(result.stderr)
-
-    # If pw-cli didn't print the ID, wait for registration and look it up
-    if node_id is None:
-        logger.debug(
-            "pw-cli returned no node ID (stdout=%r, stderr=%r), "
-            "searching by node.name...",
-            result.stdout.strip(),
-            result.stderr.strip(),
-        )
-        time.sleep(1.0)
+    # pw-cli create-node prints nothing useful (empty stdout on current
+    # PipeWire), so resolve the node ID by name. Registration is near-
+    # instant (~10 ms measured); the loop is just headroom.
+    node_id = None
+    for _ in range(50):
         node_id = _find_pw_node_id(sink_name)
+        if node_id is not None:
+            break
+        time.sleep(0.1)
 
     if node_id is None:
         raise RuntimeError(
             "Virtual sink node was not found after creation.\n"
-            f"pw-cli stdout: {result.stdout!r}\n"
-            f"pw-cli stderr: {result.stderr!r}\n"
             "Try running manually:\n"
             f"  pw-cli create-node adapter '{props}'"
         )
 
     logger.info("Created PipeWire node: id=%d, name=%s", node_id, sink_name)
 
-    # Wait for PipeWire to register the node and PulseAudio layer to pick it up
-    time.sleep(1.0)
-
-    # Find the actual PulseAudio sink name (may differ from node.name)
-    pa_sink_name = _find_pa_sink_name(sink_name)
-    if pa_sink_name:
-        logger.info("PulseAudio sink name: %s", pa_sink_name)
-    else:
-        pa_sink_name = sink_name
-        logger.warning(
-            "Could not find PulseAudio sink name, using node name: %s",
-            pa_sink_name,
-        )
-
-    monitor_source = f"{pa_sink_name}.monitor"
-
+    # pipewire-pulse derives the sink name from node.name (verified), so the
+    # monitor source name follows directly.
     return SinkInfo(
         node_id=node_id,
-        sink_name=pa_sink_name,
-        monitor_source=monitor_source,
+        sink_name=sink_name,
+        monitor_source=f"{sink_name}.monitor",
     )
 
 

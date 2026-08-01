@@ -128,7 +128,6 @@ class WebRTCController(BaseController):
             "seqNum": self._seq_num,
             "offer": {
                 "castMode": "mirroring",
-                "receiverGetStatus": True,
                 "supportedStreams": [
                     {
                         "index": 0,
@@ -144,7 +143,6 @@ class WebRTCController(BaseController):
                         "bitRate": offer.bit_rate,
                         "sampleRate": offer.sample_rate,
                         "channels": offer.channels,
-                        "receiverRtcpEventLog": True,
                     }
                 ],
             },
