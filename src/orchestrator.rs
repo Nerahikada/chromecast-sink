@@ -2,7 +2,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -22,12 +21,11 @@ pub fn run(device_name: Option<&str>) -> Result<()> {
     println!("Discovering Chromecast devices...");
     let devices = discovery::discover(device_name, TIMEOUT)?;
     if devices.is_empty() {
-        eprintln!(
+        bail!(
             "No Chromecast devices found.\n\
              Check that your device is powered on, on the same network, and\n\
              that multicast UDP 5353 is not blocked by a firewall."
         );
-        return Ok(());
     }
 
     // Phase 2: pick one
@@ -102,11 +100,10 @@ pub fn run_with_device(device: Device) -> Result<()> {
         OPUS_BITRATE,
     );
 
-    // Cleanup in reverse order
+    // Cleanup in reverse order; close/drop both join their worker threads.
     sender.stop();
     channel.close();
     drop(sink); // pipewire node destroyed here
-    thread::sleep(Duration::from_millis(50)); // let dispatchers exit
     capture_result
 }
 

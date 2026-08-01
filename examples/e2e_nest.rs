@@ -83,6 +83,8 @@ fn main() -> Result<()> {
         .cloned()
         .unwrap_or_else(|| "192.168.238.100".into());
 
+    let tone_path = std::env::temp_dir().join("chromecast_sink_e2e_tone.wav");
+    let tone = tone_path.to_str().expect("temp path is valid UTF-8");
     make_tone_wav(tone)?;
 
     println!("Creating virtual sink...");

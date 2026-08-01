@@ -11,13 +11,17 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 const SERVICE: &str = "_googlecast._tcp.local.";
 
+/// `ca` TXT bitmask: bit 0 = VIDEO_OUT. Verified on a real Nest Mini
+/// (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
+const CA_VIDEO_OUT: u32 = 0x01;
+
 #[derive(Debug, Clone)]
 pub struct Device {
     pub friendly_name: String,
     pub model: Option<String>,
     pub host: String,
-    /// True for Nest Mini / Google Home style speakers. Determined from the
-    /// model name; the video mirroring app (0F5096E8) is rejected by these.
+    /// True for speakers (Nest Mini, Google Home, third-party Cast audio).
+    /// These reject the video mirroring app (0F5096E8) outright, so getting
     pub is_audio_only: bool,
 }
 
@@ -25,27 +29,28 @@ impl Device {
     fn from_txt(host: String, txt: &HashMap<String, String>) -> Option<Self> {
         let friendly = txt.get("fn")?.to_string();
         let model = txt.get("md").cloned();
-        let is_audio_only = model
-            .as_deref()
-            .map(is_audio_only_model)
-            .unwrap_or(false);
+        let ca = txt.get("ca").and_then(|v| v.parse::<u32>().ok());
+        let is_audio_only = is_audio_only_device(ca, model.as_deref());
         Some(Self { friendly_name: friendly, model, host, is_audio_only })
     }
 }
 
-/// Rough heuristic based on Cast model names. Errs on the side of "video"
-/// (which is fine for actual video-capable devices; audio-only devices are
-/// well-known names). If mDNS gives us `ca` (capability bitmask) in the TXT
-/// we could be more precise, but this matches how pychromecast does it.
+/// Primary signal is the `ca` capability bitmask (no VIDEO_OUT bit = audio
+/// device); model names are only a fallback for responders that omit `ca`.
+fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
+    match ca {
+        Some(bits) => bits & CA_VIDEO_OUT == 0,
+        None => model.map(is_audio_only_model).unwrap_or(false),
+    }
+}
+
 fn is_audio_only_model(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     m.contains("google home")
-        || m.contains("google nest mini")
         || m.contains("nest mini")
-        || m.contains("google home mini")
+        || m.contains("nest audio")
         || m.contains("home mini")
         || m.contains("home max")
-        || m.contains("nest audio")
 }
 
 /// Discover Chromecasts on the LAN. If `wanted_name` is given, returns as soon
@@ -103,4 +108,26 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ca_bitmask_decides_when_present() {
+        assert!(is_audio_only_device(Some(198_660), None)); // real Nest Mini
+        assert!(is_audio_only_device(Some(2052), Some("Chromecast Audio")));
+        assert!(!is_audio_only_device(Some(4101), None)); // video Chromecast
+        // ca wins over a misleading model name
+        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini")));
+    }
+
+    #[test]
+    fn model_fallback_without_ca() {
+        assert!(is_audio_only_device(None, Some("Google Nest Mini")));
+        assert!(is_audio_only_device(None, Some("Google Home Max")));
+        assert!(!is_audio_only_device(None, Some("Chromecast Ultra")));
+        assert!(!is_audio_only_device(None, None));
+    }
 }

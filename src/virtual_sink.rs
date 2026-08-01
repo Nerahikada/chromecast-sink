@@ -22,7 +22,6 @@ use anyhow::{Context, Result};
 use pipewire::{self as pw, main_loop::MainLoop, node::Node, properties::properties};
 
 pub struct VirtualSink {
-    #[allow(dead_code)] // used by test scripts (paplay --device=...)
     pub sink_name: String,
     pub monitor_source: String,
     quit_tx: Option<pw::channel::Sender<()>>,
