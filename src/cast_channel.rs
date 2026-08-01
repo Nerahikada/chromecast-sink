@@ -28,8 +28,8 @@ pub const NS_HEARTBEAT: &str = "urn:x-cast:com.google.cast.tp.heartbeat";
 pub const NS_RECEIVER: &str = "urn:x-cast:com.google.cast.receiver";
 pub const NS_WEBRTC: &str = "urn:x-cast:com.google.cast.webrtc";
 
-pub const PLATFORM: &str = "receiver-0";
-pub const SENDER_LOCAL: &str = "sender-0";
+pub const PLATFORM_RECEIVER_ID: &str = "receiver-0";
+pub const LOCAL_SENDER_ID: &str = "sender-0";
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Read poll interval for the dispatcher loop.
@@ -62,7 +62,7 @@ impl CastChannel {
     /// Convenience: send a JSON payload.
     pub fn send_json(&self, destination: &str, namespace: &str, payload: &Value) -> Result<()> {
         self.send(CastMessage {
-            source: SENDER_LOCAL.into(),
+            source: LOCAL_SENDER_ID.into(),
             destination: destination.into(),
             namespace: namespace.into(),
             payload: payload.to_string(),
@@ -110,8 +110,8 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     write_message(
         &mut tls,
         &CastMessage {
-            source: SENDER_LOCAL.into(),
-            destination: PLATFORM.into(),
+            source: LOCAL_SENDER_ID.into(),
+            destination: PLATFORM_RECEIVER_ID.into(),
             namespace: NS_CONNECTION.into(),
             payload: json!({"type": "CONNECT"}).to_string(),
         },
@@ -170,7 +170,7 @@ fn dispatcher(
                         // to the caller — it is dispatcher-internal noise.
                         if msg.payload.contains(r#""type":"PING""#) {
                             let pong = CastMessage {
-                                source: SENDER_LOCAL.into(),
+                                source: LOCAL_SENDER_ID.into(),
                                 destination: msg.source.clone(),
                                 namespace: NS_HEARTBEAT.into(),
                                 payload: r#"{"type":"PONG"}"#.into(),
@@ -208,8 +208,8 @@ fn dispatcher(
         // 4. Periodic heartbeat PING to keep the socket alive
         if last_ping.elapsed() >= HEARTBEAT_INTERVAL {
             let ping = CastMessage {
-                source: SENDER_LOCAL.into(),
-                destination: PLATFORM.into(),
+                source: LOCAL_SENDER_ID.into(),
+                destination: PLATFORM_RECEIVER_ID.into(),
                 namespace: NS_HEARTBEAT.into(),
                 payload: r#"{"type":"PING"}"#.into(),
             };

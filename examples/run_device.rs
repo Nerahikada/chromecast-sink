@@ -1,9 +1,9 @@
-//! Run the full orchestrator pipeline against a fixed IP (discovery bypassed).
+//! Run the full pipeline against a fixed IP (discovery bypassed).
 //! Useful in environments where multicast/mDNS is blocked.
 //!
 //! Usage: cargo run --example run_device --release -- 192.168.238.100
 
-use chromecast_sink::{discovery::Device, orchestrator};
+use chromecast_sink::{discovery::Device, pipeline};
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -17,7 +17,7 @@ fn main() {
         host,
         is_audio_only: true,
     };
-    if let Err(e) = orchestrator::run_with_device(device) {
+    if let Err(e) = pipeline::run_with_device(device) {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
     }

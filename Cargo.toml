@@ -45,7 +45,7 @@ opus = "0.3"
 # pipewire-rs (native in-process node)
 pipewire = "0.8"
 
-# Signal handling in orchestrator (SIGINT + SIGTERM)
+# Signal handling in pipeline (SIGINT + SIGTERM)
 ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]

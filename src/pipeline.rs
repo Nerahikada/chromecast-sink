@@ -1,4 +1,4 @@
-//! Wires all components together in the same order as the Python orchestrator.
+//! End-to-end pipeline: discover → sink → cast channel → OFFER/ANSWER → capture.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
@@ -8,11 +8,11 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::capture;
+use crate::cast_channel::{self, CastMessage, NS_CONNECTION};
 use crate::cast_rtp::{self, CastRtpSender};
-use crate::castv2::{self, CastMessage, NS_CONNECTION};
 use crate::discovery::{self, Device};
+use crate::mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
 use crate::virtual_sink::VirtualSink;
-use crate::webrtc::{self, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -41,16 +41,17 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     // Phase 3: virtual sink (in-process pipewire node)
     println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
-    let sink = VirtualSink::create(&device.friendly_name)?;
+    let sink = VirtualSink::new(&device.friendly_name)?;
 
     // Phase 4: Cast v2 channel
     println!("Connecting to Chromecast...");
-    let (channel, incoming) = castv2::connect(&device.host)?;
+    let (channel, incoming) = cast_channel::connect(&device.host)?;
 
     // Phase 5: launch mirroring receiver
     println!("Launching mirroring receiver...");
+    let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };
     let transport =
-        webrtc::launch_mirroring(&channel, &incoming, device.is_audio_only, TIMEOUT)?;
+        mirroring::launch_mirroring(&channel, &incoming, mode, TIMEOUT)?;
     channel.connect_transport(&transport)?;
 
     // Phase 6: OFFER / ANSWER
@@ -60,7 +61,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
         OPUS_BITRATE / 1000,
         TARGET_DELAY_MS,
     );
-    let answer = webrtc::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
+    let answer = mirroring::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
     if !answer.send_indexes.contains(&0) {
         bail!(
             "Chromecast did not accept the audio stream (sendIndexes={:?})",

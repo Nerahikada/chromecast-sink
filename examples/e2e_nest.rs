@@ -15,10 +15,10 @@ use std::time::Duration;
 use anyhow::Result;
 use chromecast_sink::{
     capture,
+    cast_channel,
     cast_rtp::{self, CastRtpSender, StatsHandle},
-    castv2,
+    mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE},
     virtual_sink::VirtualSink,
-    webrtc::{self, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE},
 };
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -87,17 +87,17 @@ fn main() -> Result<()> {
     make_tone_wav(tone)?;
 
     println!("Creating virtual sink...");
-    let sink = VirtualSink::create("Test Nest")?;
+    let sink = VirtualSink::new("Test Nest")?;
     println!("  monitor: {}", sink.monitor_source);
     println!("  sink   : {}", sink.sink_name);
 
     println!("Connecting to {host}...");
-    let (channel, incoming) = castv2::connect(&host)?;
-    let transport = webrtc::launch_mirroring(&channel, &incoming, true, TIMEOUT)?;
+    let (channel, incoming) = cast_channel::connect(&host)?;
+    let transport = mirroring::launch_mirroring(&channel, &incoming, StreamMode::AudioOnly, TIMEOUT)?;
     channel.connect_transport(&transport)?;
 
     let offer = StreamOffer::default();
-    let answer = webrtc::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
+    let answer = mirroring::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
     assert!(answer.send_indexes.contains(&0), "audio stream not accepted");
     println!("ANSWER: udp_port={} send_indexes={:?}", answer.udp_port, answer.send_indexes);
 

@@ -1,8 +1,9 @@
-//! Cast Streaming OFFER/ANSWER over the webrtc namespace, plus receiver
-//! LAUNCH/GET_STATUS helpers on the receiver namespace.
+//! Cast mirroring control: LAUNCH the receiver app, then OFFER/ANSWER
+//! stream negotiation over the (misleadingly-named) `webrtc` namespace —
+//! the payloads are Cast-proprietary JSON, not SDP/WebRTC.
 //!
 //! The receiver namespace flow gives us the `transportId` of the launched
-//! app, which is the destination for the webrtc OFFER.
+//! app, which is the destination for the OFFER.
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -11,8 +12,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use rand::RngCore;
 use serde_json::{json, Value};
 
-use crate::castv2::{
-    CastChannel, CastMessage, NS_RECEIVER, NS_WEBRTC, PLATFORM,
+use crate::cast_channel::{
+    CastChannel, CastMessage, NS_RECEIVER, NS_WEBRTC, PLATFORM_RECEIVER_ID,
 };
 
 /// Cast Streaming receiver apps (openscreen: `cast_streaming_app_ids.h`).
@@ -29,6 +30,22 @@ pub const OPUS_BITRATE: i32 = 128_000;
 pub const RTP_PAYLOAD_TYPE: u8 = 127;
 /// Target playout delay in ms. `0` is intentional (not "device default" —
 pub const TARGET_DELAY_MS: u32 = 0;
+
+/// Which mirroring app to launch. Audio-only speakers reject the video
+#[derive(Debug, Clone, Copy)]
+pub enum StreamMode {
+    AudioOnly,
+    AudioVideo,
+}
+
+impl StreamMode {
+    fn app_id(self) -> &'static str {
+        match self {
+            StreamMode::AudioOnly => APP_MIRRORING_AUDIO_ONLY,
+            StreamMode::AudioVideo => APP_MIRRORING_AUDIO_VIDEO,
+        }
+    }
+}
 
 /// Per-session state offered to the receiver. Everything else about the
 /// audio stream (codec/rate/channels/bitrate/PT/target-delay) is fixed —
@@ -63,21 +80,15 @@ pub struct StreamAnswer {
 pub fn launch_mirroring(
     channel: &CastChannel,
     incoming: &Receiver<CastMessage>,
-    is_audio_only: bool,
+    mode: StreamMode,
     timeout: Duration,
 ) -> Result<String> {
-    let app_id = if is_audio_only {
-        APP_MIRRORING_AUDIO_ONLY
-    } else {
-        APP_MIRRORING_AUDIO_VIDEO
-    };
+    let app_id = mode.app_id();
     let request_id = new_request_id();
 
-    log::info!(
-        "Launching mirroring app {app_id} (audio-only: {is_audio_only})"
-    );
+    log::info!("Launching mirroring app {app_id} ({mode:?})");
     channel.send_json(
-        PLATFORM,
+        PLATFORM_RECEIVER_ID,
         NS_RECEIVER,
         &json!({
             "type": "LAUNCH",

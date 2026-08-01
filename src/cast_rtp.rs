@@ -25,7 +25,7 @@ use ctr::Ctr128BE;
 pub const OPUS_SAMPLES_PER_FRAME: u32 = 480;
 
 /// Seconds between 1900-01-01 (NTP epoch) and 1970-01-01 (UNIX epoch).
-const NTP_EPOCH_OFFSET: u64 = 2_208_988_800;
+const NTP_EPOCH_OFFSET_SECS: u64 = 2_208_988_800;
 
 type Aes128Ctr = Ctr128BE<Aes128>;
 
@@ -226,7 +226,7 @@ fn build_rtcp_sr(ssrc: u32, frame_id: u32, octet_count: u64) -> [u8; 28] {
 /// Clock-injectable core so tests can compare full 28-byte output against the
 /// Python reference implementation.
 fn build_rtcp_sr_at(ssrc: u32, frame_id: u32, octet_count: u64, now: Duration) -> [u8; 28] {
-    let ntp_sec = (now.as_secs() + NTP_EPOCH_OFFSET) as u32;
+    let ntp_sec = (now.as_secs() + NTP_EPOCH_OFFSET_SECS) as u32;
     let ntp_frac = ((now.subsec_nanos() as u64 * (1u64 << 32) / 1_000_000_000) & 0xFFFF_FFFF) as u32;
     let rtp_ts = frame_id.wrapping_mul(OPUS_SAMPLES_PER_FRAME);
 

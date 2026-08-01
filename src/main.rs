@@ -2,7 +2,7 @@
 
 use clap::Parser;
 
-use chromecast_sink::orchestrator;
+use chromecast_sink::pipeline;
 
 #[derive(Parser)]
 #[command(
@@ -29,7 +29,7 @@ fn main() {
         .format_timestamp_millis()
         .init();
 
-    if let Err(e) = orchestrator::run(cli.device.as_deref()) {
+    if let Err(e) = pipeline::run(cli.device.as_deref()) {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
     }

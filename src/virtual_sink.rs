@@ -29,7 +29,7 @@ pub struct VirtualSink {
 }
 
 impl VirtualSink {
-    pub fn create(device_name: &str) -> Result<Self> {
+    pub fn new(device_name: &str) -> Result<Self> {
         let sink_name = sanitize_sink_name(device_name);
         let description = format!("Chromecast - {device_name}");
 
