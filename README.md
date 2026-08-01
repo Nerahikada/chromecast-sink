@@ -6,12 +6,27 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 
 ## Requirements
 
-- **OS**: Linux with PipeWire (tested on Ubuntu 25.10, 26.04)
-- **Rust**: 1.85+ (only for building)
-- **System packages** (runtime + build):
-  ```bash
-  sudo apt install libopus-dev libpulse-dev libpipewire-0.3-dev libssl-dev libclang-dev pkg-config
-  ```
+**OS**: Linux with PipeWire (tested on Ubuntu 25.10, 26.04).
+
+### Runtime
+
+Shared libraries the compiled binary links against:
+
+```bash
+sudo apt install libpipewire-0.3-0t64 libpulse0 libopus0 libssl3t64
+```
+
+The PipeWire stack itself (`pipewire`, `pipewire-pulse`, `wireplumber`) is preinstalled on any modern Ubuntu desktop. On a headless machine, install those explicitly too.
+
+### Build
+
+Rust 1.85+ (install via `rustup`; the floor comes from `clap` 4.6's edition-2024 deps) plus:
+
+```bash
+sudo apt install libpipewire-0.3-dev libpulse-dev libopus-dev libssl-dev libclang-dev pkg-config
+```
+
+`libclang-dev` is used by `bindgen` (pulled in by `pipewire-sys`) and `pkg-config` locates `.pc` files; neither is linked into the final binary. The four `-dev` packages each depend on their runtime counterpart above, so on a build-and-run machine this line alone is sufficient.
 
 ## Installation
 
