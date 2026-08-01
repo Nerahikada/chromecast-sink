@@ -1,6 +1,7 @@
 //! Wires all components together in the same order as the Python orchestrator.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::capture;
 use crate::cast_rtp::{self, CastRtpSender};
-use crate::castv2;
+use crate::castv2::{self, CastMessage, NS_CONNECTION};
 use crate::discovery::{self, Device};
 use crate::virtual_sink::VirtualSink;
 use crate::webrtc::{self, StreamOffer};
@@ -85,6 +86,11 @@ pub fn run_with_device(device: Device) -> Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     install_signal_handler(Arc::clone(&stop));
 
+    // Watch the Cast channel: stop when the receiver CLOSEs our session
+    // (e.g. someone else starts casting) or the TLS connection dies. Without
+    // this, the pipeline would keep sending UDP into the void forever.
+    let monitor = spawn_session_monitor(incoming, transport.clone(), Arc::clone(&stop));
+
     // Phase 9: capture in this thread (the RTCP thread runs in the background)
     println!(
         "\nStreaming to \"{}\" via Cast Streaming (UDP).\n\
@@ -100,11 +106,53 @@ pub fn run_with_device(device: Device) -> Result<()> {
         OPUS_BITRATE,
     );
 
-    // Cleanup in reverse order; close/drop both join their worker threads.
+    // Cleanup in reverse order. Closing the channel drops the dispatcher and
+    // with it the incoming sender, which unblocks the session monitor.
     sender.stop();
     channel.close();
+    let _ = monitor.join();
     drop(sink); // pipewire node destroyed here
     capture_result
+}
+
+/// Session-death watchdog: sets `stop` when the receiver closes our virtual
+/// connection to the mirroring app or the Cast socket dies.
+fn spawn_session_monitor(
+    incoming: Receiver<CastMessage>,
+    transport: String,
+    stop: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("session-monitor".into())
+        .spawn(move || {
+            loop {
+                match incoming.recv() {
+                    Ok(msg) => {
+                        if msg.namespace == NS_CONNECTION
+                            && msg.source == transport
+                            && msg.payload.contains(r#""CLOSE""#)
+                        {
+                            if !stop.load(Ordering::Relaxed) {
+                                eprintln!("\nReceiver closed the mirroring session; shutting down.");
+                            }
+                            stop.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        log::debug!("cast rx [{}] {}", msg.namespace, msg.payload);
+                    }
+                    Err(_) => {
+                        // Dispatcher gone: normal during our own shutdown,
+                        // otherwise the connection to the device was lost.
+                        if !stop.load(Ordering::Relaxed) {
+                            eprintln!("\nConnection to Chromecast lost; shutting down.");
+                        }
+                        stop.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+        })
+        .expect("spawn session monitor")
 }
 
 fn pick_device(mut devices: Vec<Device>) -> Result<Device> {

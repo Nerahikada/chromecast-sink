@@ -227,6 +227,12 @@ impl StatsHandle {
 
 fn build_rtcp_sr(ssrc: u32, frame_id: u32, octet_count: u64) -> [u8; 28] {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    build_rtcp_sr_at(ssrc, frame_id, octet_count, now)
+}
+
+/// Clock-injectable core so tests can compare full 28-byte output against the
+/// Python reference implementation.
+fn build_rtcp_sr_at(ssrc: u32, frame_id: u32, octet_count: u64, now: Duration) -> [u8; 28] {
     let ntp_sec = (now.as_secs() + NTP_EPOCH_OFFSET) as u32;
     let ntp_frac = ((now.subsec_nanos() as u64 * (1u64 << 32) / 1_000_000_000) & 0xFFFF_FFFF) as u32;
     let rtp_ts = frame_id.wrapping_mul(OPUS_SAMPLES_PER_FRAME);
@@ -291,6 +297,70 @@ mod tests {
             *b ^= 0x11;
         }
         assert_eq!(n, expected);
+    }
+
+    // ---- Differential tests against the Python reference implementation ----
+    // Expected hex generated from src/chromecast_sink/cast_rtp.py at commit
+    // acfdb6c (the field-verified Python version), with key=00..0f and
+    // iv_mask=f0..ff. Any mismatch here means we broke wire compatibility.
+
+    fn diff_cfg() -> Config {
+        let mut key = [0u8; 16];
+        let mut mask = [0u8; 16];
+        for i in 0..16 {
+            key[i] = i as u8;
+            mask[i] = 0xF0 + i as u8;
+        }
+        Config {
+            chromecast_host: "127.0.0.1".into(),
+            udp_port: 1,
+            ssrc: 0xDEAD_BEEF,
+            payload_type: 127,
+            aes_key: key,
+            aes_iv_mask: mask,
+        }
+    }
+
+    #[test]
+    fn encryption_matches_python_reference() {
+        let s = CastRtpSender::new(diff_cfg()).unwrap();
+        let payload = b"0123456789abcdef";
+        for (fid, expected) in [
+            (0u32, "5696f5db0067077faf68bf655072c8cb"),
+            (5, "32f6787cc44c4201f466acc715997af9"),
+            (256, "da4c3a84b5565c4161b5d95ebcffa2d4"),
+            (0x1234_5678, "747b8dae4bc012851ec33fba1e6b8ea3"),
+        ] {
+            assert_eq!(hex::encode(s.encrypt(payload, fid)), expected, "frame_id={fid}");
+        }
+    }
+
+    #[test]
+    fn packet_matches_python_reference() {
+        let s = CastRtpSender::new(diff_cfg()).unwrap();
+        assert_eq!(
+            hex::encode(s.build_packet(b"payload", 5)),
+            "80ff000500000960deadbeef8005000000007061796c6f6164"
+        );
+        // frame_id > 255 exercises the u8 truncation in the Cast extension
+        assert_eq!(
+            hex::encode(s.build_packet(b"xy", 300)),
+            "80ff012c00023280deadbeef802c000000007879"
+        );
+    }
+
+    #[test]
+    fn rtcp_sr_matches_python_reference() {
+        // Python side was generated with time.time() pinned to 1234567890.5,
+        // frame_id=12345, octet_count=987654.
+        let sr = build_rtcp_sr_at(
+            0xDEAD_BEEF, 12345, 987_654,
+            Duration::new(1_234_567_890, 500_000_000),
+        );
+        assert_eq!(
+            hex::encode(sr),
+            "80c80006deadbeefcd40815280000000005a6ae000003039000f1206"
+        );
     }
 
     #[test]

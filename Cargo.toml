@@ -2,7 +2,8 @@
 name = "chromecast-sink"
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.75"
+# Floor set by clap 4.6's edition-2024 deps; verified with `cargo +1.85.0 check`.
+rust-version = "1.85"
 description = "Use Google Chromecast / Nest as a Linux speaker output via PipeWire virtual sink"
 license = "MIT"
 

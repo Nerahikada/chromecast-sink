@@ -7,7 +7,7 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 ## Requirements
 
 - **OS**: Linux with PipeWire (tested on Ubuntu 25.10, 26.04)
-- **Rust**: 1.75+ (only for building)
+- **Rust**: 1.85+ (only for building)
 - **System packages** (runtime + build):
   ```bash
   sudo apt install libopus-dev libpulse-dev libpipewire-0.3-dev libssl-dev libclang-dev pkg-config

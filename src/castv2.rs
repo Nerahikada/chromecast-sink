@@ -192,12 +192,16 @@ fn dispatcher(
             }
         }
 
-        // 3. Drain outbound queue
+        // 3. Drain outbound queue. A write error means the socket is dead or
+        // (after a partial write) the message framing is corrupt — either way
+        // the connection is unusable, so shut the dispatcher down.
         loop {
             match outbound.try_recv() {
                 Ok(msg) => {
                     if let Err(e) = write_message(&mut tls, &msg) {
                         log::warn!("Cast socket write error: {e}");
+                        stop.store(true, Ordering::Relaxed);
+                        break;
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -337,6 +341,37 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Byte-identical to the official protobuf encoder: expected hex was
+    /// generated with pychromecast's cast_channel_pb2 (protoc output).
+    #[test]
+    fn encoding_matches_official_protobuf() {
+        let ping = CastMessage {
+            source: "sender-0".into(),
+            destination: "receiver-0".into(),
+            namespace: NS_HEARTBEAT.into(),
+            payload: r#"{"type":"PING"}"#.into(),
+        };
+        assert_eq!(
+            hex::encode(encode_cast_message(&ping)),
+            "0800120873656e6465722d301a0a72656365697665722d30222775726e3a782d\
+             636173743a636f6d2e676f6f676c652e636173742e74702e6865617274626561\
+             742800320f7b2274797065223a2250494e47227d",
+        );
+        let offer = CastMessage {
+            source: "sender-0".into(),
+            destination: "173cb36a-a488-4fc3-963a-651334ad51c1".into(),
+            namespace: NS_WEBRTC.into(),
+            payload: r#"{"type":"OFFER","seqNum":1}"#.into(),
+        };
+        assert_eq!(
+            hex::encode(encode_cast_message(&offer)),
+            "0800120873656e6465722d301a2431373363623336612d613438382d34666333\
+             2d393633612d363531333334616435316331222175726e3a782d636173743a63\
+             6f6d2e676f6f676c652e636173742e7765627274632800321b7b227479706522\
+             3a224f46464552222c227365714e756d223a317d",
+        );
+    }
 
     #[test]
     fn roundtrip_cast_message() {
