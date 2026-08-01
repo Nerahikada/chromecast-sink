@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import atexit
 import logging
 import signal
 import sys
@@ -46,11 +45,9 @@ class Orchestrator:
         self._capture_thread: threading.Thread | None = None
         self._discovery_result: DiscoveryResult | None = None
         self._shutdown_event = threading.Event()
-        self._cleanup_done = False
 
     def run(self) -> int:
         """Execute the full pipeline. Returns exit code."""
-        atexit.register(self._cleanup)
         self._setup_signals()
 
         try:
@@ -128,11 +125,7 @@ class Orchestrator:
                 "This device may require video as well."
             )
 
-        logger.info(
-            "Stream negotiated: UDP port %d, receiver SSRC %d",
-            answer.udp_port,
-            answer.receiver_ssrc,
-        )
+        logger.info("Stream negotiated: UDP port %d", answer.udp_port)
 
         # Phase 7: Create and start Cast RTP sender
         rtp_config = CastRTPConfig(
@@ -142,7 +135,6 @@ class Orchestrator:
             payload_type=offer.rtp_payload_type,
             aes_key=offer.aes_key,
             aes_iv_mask=offer.aes_iv_mask,
-            target_playout_delay_ms=self.config.target_delay,
         )
         self._cast_rtp_sender = CastRTPSender(rtp_config)
         self._cast_rtp_sender.start()
@@ -212,10 +204,6 @@ class Orchestrator:
 
     def _cleanup(self) -> None:
         """Tear down all resources in reverse creation order."""
-        if self._cleanup_done:
-            return
-        self._cleanup_done = True
-
         logger.debug("Running cleanup...")
 
         # 1. Stop the capture loop and wait for it to release the source

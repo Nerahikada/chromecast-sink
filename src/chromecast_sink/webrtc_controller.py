@@ -59,7 +59,6 @@ class StreamAnswer:
     """Parsed ANSWER from Chromecast."""
 
     udp_port: int
-    receiver_ssrc: int
     send_indexes: list[int]
 
 
@@ -97,7 +96,6 @@ class WebRTCController(BaseController):
         answer = data.get("answer", {})
         self._answer = StreamAnswer(
             udp_port=answer["udpPort"],
-            receiver_ssrc=answer.get("ssrcs", [0])[0],
             send_indexes=answer.get("sendIndexes", []),
         )
         logger.info(
@@ -105,21 +103,6 @@ class WebRTCController(BaseController):
             self._answer.udp_port,
             self._answer.send_indexes,
         )
-
-        # Log constraints if present (shows min/max delay the receiver supports)
-        constraints = answer.get("constraints")
-        if constraints:
-            logger.info("Receiver constraints: %s", json.dumps(constraints))
-            audio_c = constraints.get("audio")
-            if audio_c:
-                min_delay = audio_c.get("minDelay")
-                max_delay = audio_c.get("maxDelay")
-                if min_delay is not None or max_delay is not None:
-                    logger.warning(
-                        "Receiver delay range: min=%s ms, max=%s ms",
-                        min_delay, max_delay,
-                    )
-
         self._answer_event.set()
 
     def send_offer(self, offer: StreamOffer, timeout: float = 10) -> StreamAnswer:

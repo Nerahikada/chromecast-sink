@@ -38,7 +38,6 @@ class CastRTPConfig:
     payload_type: int
     aes_key: bytes
     aes_iv_mask: bytes
-    target_playout_delay_ms: int = 0
 
 
 class CastRTPSender:
@@ -54,12 +53,11 @@ class CastRTPSender:
         self.config = config
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._dest = (config.chromecast_host, config.udp_port)
-        self._seq_num = 0
+        # One frame is always one packet, so the frame ID doubles as the RTP
+        # sequence number and packet count; the RTP timestamp is derived.
         self._frame_id = 0
-        self._rtp_timestamp = 0
-        self._packet_count = 0
         self._octet_count = 0
-        self._running = False
+        self._stop = threading.Event()
         self._rtcp_thread: threading.Thread | None = None
 
     def _encrypt_frame(self, data: bytes, frame_id: int) -> bytes:
@@ -100,8 +98,8 @@ class CastRTPSender:
             ">BBHII",
             v_p_x_cc,
             m_pt,
-            self._seq_num & 0xFFFF,
-            self._rtp_timestamp & 0xFFFFFFFF,
+            frame_id & 0xFFFF,
+            (frame_id * OPUS_SAMPLES_PER_FRAME) & 0xFFFFFFFF,
             self.config.ssrc & 0xFFFFFFFF,
         )
 
@@ -123,10 +121,7 @@ class CastRTPSender:
 
         self._sock.sendto(packet, self._dest)
 
-        self._seq_num += 1
         self._frame_id += 1
-        self._rtp_timestamp += OPUS_SAMPLES_PER_FRAME
-        self._packet_count += 1
         self._octet_count += len(opus_frame)
 
     def _build_rtcp_sr(self) -> bytes:
@@ -143,40 +138,32 @@ class CastRTPSender:
             self.config.ssrc & 0xFFFFFFFF,
             ntp_sec & 0xFFFFFFFF,
             ntp_frac & 0xFFFFFFFF,
-            self._rtp_timestamp & 0xFFFFFFFF,
-            self._packet_count & 0xFFFFFFFF,
+            (self._frame_id * OPUS_SAMPLES_PER_FRAME) & 0xFFFFFFFF,
+            self._frame_id & 0xFFFFFFFF,
             self._octet_count & 0xFFFFFFFF,
         )
 
     def start(self) -> None:
         """Start the RTCP sender thread."""
-        self._running = True
 
         def rtcp_send_loop():
-            while self._running:
+            while not self._stop.is_set():
                 try:
-                    sr = self._build_rtcp_sr()
-                    self._sock.sendto(sr, self._dest)
+                    self._sock.sendto(self._build_rtcp_sr(), self._dest)
                 except Exception as e:
                     logger.debug("RTCP send error: %s", e)
-                for _ in range(10):
-                    if not self._running:
-                        break
-                    time.sleep(0.05)
+                self._stop.wait(0.5)
 
         self._rtcp_thread = threading.Thread(
             target=rtcp_send_loop, daemon=True, name="rtcp-sender"
         )
         self._rtcp_thread.start()
 
-        logger.info(
-            "Cast RTP started (RTCP interval=500ms, playout_delay=%dms)",
-            self.config.target_playout_delay_ms,
-        )
+        logger.info("Cast RTP started (RTCP interval=500ms)")
 
     def stop(self) -> None:
         """Stop the RTP/RTCP sender and close the socket."""
-        self._running = False
+        self._stop.set()
         if self._rtcp_thread:
             self._rtcp_thread.join(timeout=2)
         try:
@@ -185,6 +172,6 @@ class CastRTPSender:
             pass
         logger.info(
             "Cast RTP sender stopped (sent %d packets, %d bytes)",
-            self._packet_count,
+            self._frame_id,
             self._octet_count,
         )
