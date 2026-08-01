@@ -58,7 +58,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
     let mut devices: HashMap<String, Device> = HashMap::new();
 
     while Instant::now() < deadline {
-        let remaining = deadline - Instant::now();
+        let remaining = deadline.saturating_duration_since(Instant::now());
         match receiver.recv_timeout(remaining.min(Duration::from_millis(200))) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
                 // TXT properties come as key=value; mdns-sd exposes them as `properties()`.

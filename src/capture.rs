@@ -2,8 +2,9 @@
 //!
 //! Reads one Opus-frame worth per pa_simple_read; the sink's node.force-quantum
 //! dominates capture latency, so there's nothing to gain from smaller reads.
-//! When we fall behind, we explicitly drain (see `_drain` in the Python side):
-//! PulseAudio does not shed backlog on its own.
+//! When we fall behind, we explicitly `drain()`: PulseAudio does not shed
+//! backlog on its own — reads proceed at real time so they can never outpace
+//! the source, and permanent added latency is worse than one glitch.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

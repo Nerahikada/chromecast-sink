@@ -1,5 +1,6 @@
 //! End-to-end validation against a known Nest Mini, discovery bypassed.
-//! Mirrors tests/test_b_device.py on the Python side.
+//! Captures silence, injects a 440 Hz tone via `paplay`, and asserts that
+//! the sender's per-frame byte count jumps from ~3 (silence) to ~130-160.
 //!
 //! Usage:
 //!   cargo run --example e2e_nest --release -- 192.168.238.100

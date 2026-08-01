@@ -1,7 +1,6 @@
 //! Opus encoder wrapper for the Cast Streaming pipeline.
 //!
-//! 48 kHz stereo, `RESTRICTED_LOWDELAY` application, 10 ms frames — matches
-//! what the Python side has been verified against.
+//! 48 kHz stereo, `RESTRICTED_LOWDELAY` application, 10 ms frames.
 
 use anyhow::Result;
 use opus::{Application, Bitrate, Channels, Encoder};
