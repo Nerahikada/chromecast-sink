@@ -17,8 +17,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use pipewire::{self as pw, main_loop::MainLoop, node::Node, properties::properties};
 
 pub struct VirtualSink {
@@ -42,10 +43,17 @@ impl VirtualSink {
             .spawn(move || run_pw_thread(sink_name_c, description, quit_rx, ready_tx))
             .expect("spawn pw-sink thread");
 
-        // Wait for the node to be bound on the server.
-        ready_rx
-            .recv()
-            .context("pipewire thread died before sink was ready")??;
+        // Wait for the node to be bound on the server. Bounded so a hung
+        // pipewire server can't hang the CLI's startup indefinitely.
+        match ready_rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(r) => r?,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                bail!("pipewire did not confirm sink creation within 10s")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("pipewire thread died before sink was ready")
+            }
+        }
 
         log::info!("Virtual sink ready: {}", sink_name);
         Ok(Self {

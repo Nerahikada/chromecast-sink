@@ -168,7 +168,7 @@ fn dispatcher(
                     if msg.namespace == NS_HEARTBEAT {
                         // Auto-PONG to PINGs. Never forward heartbeat traffic
                         // to the caller — it is dispatcher-internal noise.
-                        if msg.payload.contains(r#""type":"PING""#) {
+                        if payload_type_is(&msg.payload, "PING") {
                             let pong = CastMessage {
                                 source: LOCAL_SENDER_ID.into(),
                                 destination: msg.source.clone(),
@@ -261,6 +261,14 @@ fn write_varint_field(buf: &mut Vec<u8>, tag: u32, v: u64) {
     // wire_type 0 (varint) — the `| 0` is elided
     write_varint(buf, (tag as u64) << 3);
     write_varint(buf, v);
+}
+
+/// Returns true iff `payload` parses as a JSON object with `{"type": expected}`.
+/// Used to gate hot-path behavior (heartbeat auto-PONG, session-close detection)
+/// on a real JSON parse rather than a fragile substring match.
+pub fn payload_type_is(payload: &str, expected: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(payload) else { return false };
+    v.get("type").and_then(|t| t.as_str()) == Some(expected)
 }
 
 pub fn encode_cast_message(msg: &CastMessage) -> Vec<u8> {

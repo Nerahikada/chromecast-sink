@@ -29,8 +29,19 @@ const DRAIN_TARGET_MS: f64 = 10.0;
 const DRAIN_MAX_FRAMES: usize = 2000;
 
 fn latency_ms(s: &Simple) -> f64 {
-    // libpulse_binding::time::MicroSeconds is a newtype over u64 µs.
-    s.get_latency().map(|d| d.0 as f64 / 1000.0).unwrap_or(0.0)
+    // libpulse_binding::time::MicroSeconds is a newtype over u64 µs. If
+    // polling fails we return 0 so the drain heuristic just no-ops — but
+    // warn once so a silently-broken poll can't hide a mounting backlog.
+    static POLL_ERR_LOGGED: AtomicBool = AtomicBool::new(false);
+    match s.get_latency() {
+        Ok(d) => d.0 as f64 / 1000.0,
+        Err(e) => {
+            if !POLL_ERR_LOGGED.swap(true, Ordering::Relaxed) {
+                log::warn!("pulse get_latency failed ({e}); drain heuristic disabled");
+            }
+            0.0
+        }
+    }
 }
 
 fn drain(s: &Simple, buf: &mut [u8]) -> usize {

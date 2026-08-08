@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::capture;
-use crate::cast_channel::{self, CastMessage, NS_CONNECTION};
+use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION};
 use crate::cast_rtp::{self, CastRtpSender};
 use crate::discovery::{self, Device};
 use crate::mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
@@ -132,7 +132,7 @@ fn spawn_session_monitor(
             while let Ok(msg) = incoming.recv() {
                 if msg.namespace == NS_CONNECTION
                     && msg.source == transport
-                    && msg.payload.contains(r#""CLOSE""#)
+                    && payload_type_is(&msg.payload, "CLOSE")
                 {
                     reason = "Receiver closed the mirroring session";
                     break;
