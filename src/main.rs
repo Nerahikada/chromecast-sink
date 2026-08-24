@@ -1,5 +1,3 @@
-//! chromecast-sink — use a Chromecast / Google Nest device as a Linux
-
 use clap::Parser;
 
 use chromecast_sink::pipeline;

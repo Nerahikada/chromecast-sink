@@ -1,5 +1,3 @@
-//! Library facade so integration tests and examples can reuse the pipeline.
-
 pub mod capture;
 pub mod cast_channel;
 pub mod cast_rtp;

@@ -1,8 +1,3 @@
-//! Chromecast device discovery via mDNS.
-//!
-//! Listens for `_googlecast._tcp.local.` service records. `md` TXT field
-//! carries the model name; audio-only devices ("Google Nest Mini", "Google
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -20,8 +15,7 @@ pub struct Device {
     pub friendly_name: String,
     pub model: Option<String>,
     pub host: String,
-    /// True for speakers (Nest Mini, Google Home, third-party Cast audio).
-    /// These reject the video mirroring app (0F5096E8) outright, so getting
+    /// Speakers reject the video mirroring app outright — see the app-ID
     pub is_audio_only: bool,
 }
 
@@ -35,8 +29,8 @@ impl Device {
     }
 }
 
-/// Primary signal is the `ca` capability bitmask (no VIDEO_OUT bit = audio
-/// device); model names are only a fallback for responders that omit `ca`.
+/// `ca` bitmask is authoritative; model-name matching is a fallback for
+/// responders that omit `ca`.
 fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
     match ca {
         Some(bits) => bits & CA_VIDEO_OUT == 0,
@@ -53,8 +47,8 @@ fn is_audio_only_model(model: &str) -> bool {
         || m.contains("home max")
 }
 
-/// Discover Chromecasts on the LAN. If `wanted_name` is given, returns as soon
-/// as it's found; otherwise waits the full timeout.
+/// If `wanted_name` is given, returns as soon as it's found; otherwise waits
+/// the full timeout.
 pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
     let daemon = ServiceDaemon::new().context("start mdns daemon")?;
     let receiver = daemon.browse(SERVICE).context("start browse")?;
@@ -66,7 +60,6 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
         let remaining = deadline.saturating_duration_since(Instant::now());
         match receiver.recv_timeout(remaining.min(Duration::from_millis(200))) {
             Ok(ServiceEvent::ServiceResolved(info)) => {
-                // TXT properties come as key=value; mdns-sd exposes them as `properties()`.
                 let mut txt = HashMap::new();
                 for prop in info.get_properties().iter() {
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
@@ -84,7 +77,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 }
             }
             Ok(_) => {}
-            Err(_) => {} // timeout tick
+            Err(_) => {}
         }
     }
 

@@ -1,6 +1,3 @@
-//! Run the full pipeline against a fixed IP (discovery bypassed).
-//! Useful in environments where multicast/mDNS is blocked.
-//!
 //! Usage: cargo run --example run_device --release -- 192.168.238.100
 
 use chromecast_sink::{discovery::Device, pipeline};

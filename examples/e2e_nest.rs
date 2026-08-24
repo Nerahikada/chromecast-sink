@@ -1,10 +1,8 @@
-//! End-to-end validation against a known Nest Mini, discovery bypassed.
-//! Captures silence, injects a 440 Hz tone via `paplay`, and asserts that
-//! the sender's per-frame byte count jumps from ~3 (silence) to ~130-160.
-//!
 //! Usage:
 //!   cargo run --example e2e_nest --release -- 192.168.238.100
 //!   cargo run --example e2e_nest --release -- 192.168.238.100 --no-rtcp
+//!
+//! `--no-rtcp` disables Sender Reports to verify the receiver kills the
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,8 +52,8 @@ fn make_tone_wav(path: &str) -> Result<()> {
     wav.extend_from_slice(&chunk_size.to_le_bytes());
     wav.extend_from_slice(b"WAVEfmt ");
     wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());          // PCM
-    wav.extend_from_slice(&2u16.to_le_bytes());          // stereo
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&2u16.to_le_bytes()); // stereo
     wav.extend_from_slice(&sr.to_le_bytes());
     wav.extend_from_slice(&byte_rate.to_le_bytes());
     wav.extend_from_slice(&block_align.to_le_bytes());
@@ -74,7 +72,6 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     let no_rtcp = args.iter().any(|a| a == "--no-rtcp");
-    // First positional non-flag arg is the host; default is the local Nest Mini.
     let host = args
         .iter()
         .skip(1)
@@ -150,7 +147,6 @@ fn main() -> Result<()> {
 
     stop.store(true, Ordering::Relaxed);
     let _ = cap_thread.join();
-    // channel & sink drop cleanly here — Cast socket closes, node destroyed
 
     let ok = silence < 20.0 && (100.0..200.0).contains(&tone_bpf);
     println!(

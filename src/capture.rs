@@ -1,11 +1,3 @@
-//! Monitor capture via libpulse-simple, Opus encode, hand off to Cast RTP.
-//!
-//! Reads one Opus-frame worth per pa_simple_read; the sink's node.force-quantum
-//! dominates capture latency, so there's nothing to gain from smaller reads.
-//! When we fall behind, we explicitly `drain()`: PulseAudio does not shed
-//! backlog on its own — reads proceed at real time so they can never outpace
-//! the source, and permanent added latency is worse than one glitch.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,14 +16,15 @@ pub const CHANNELS: u8 = 2;
 const BYTES_PER_SAMPLE: usize = 2;
 const FRAME_BYTES: usize = OPUS_SAMPLES_PER_FRAME as usize * CHANNELS as usize * BYTES_PER_SAMPLE;
 
+// PulseAudio never sheds capture backlog on its own — a stall permanently
+// inflates latency until we explicitly discard frames. Trip at 30 ms, drain
+// down to 10 ms; bounded so a broken clock can't spin forever.
 const DRAIN_THRESHOLD_MS: f64 = 30.0;
 const DRAIN_TARGET_MS: f64 = 10.0;
 const DRAIN_MAX_FRAMES: usize = 2000;
 
 fn latency_ms(s: &Simple) -> f64 {
-    // libpulse_binding::time::MicroSeconds is a newtype over u64 µs. If
-    // polling fails we return 0 so the drain heuristic just no-ops — but
-    // warn once so a silently-broken poll can't hide a mounting backlog.
+    // Warn once so a silently-broken poll can't hide a mounting backlog.
     static POLL_ERR_LOGGED: AtomicBool = AtomicBool::new(false);
     match s.get_latency() {
         Ok(d) => d.0 as f64 / 1000.0,
@@ -55,7 +48,6 @@ fn drain(s: &Simple, buf: &mut [u8]) -> usize {
     dropped
 }
 
-/// Capture, encode, and send audio until `stop` is set.
 pub fn run(
     monitor_source: &str,
     sender: &mut CastRtpSender,
@@ -92,7 +84,6 @@ pub fn run(
     );
 
     let mut pcm_bytes = vec![0u8; FRAME_BYTES];
-    // Interleaved i16 view — libpulse-simple only speaks &[u8]
     let mut pcm_i16 = vec![0i16; OPUS_SAMPLES_PER_FRAME as usize * CHANNELS as usize];
 
     let start = Instant::now();
@@ -105,7 +96,7 @@ pub fn run(
         simple.read(&mut pcm_bytes).context("pulse read")?;
 
         if latency_ms(&simple) > DRAIN_THRESHOLD_MS {
-            let d = drain(&simple, &mut pcm_bytes) + 1; // the frame just read is stale too
+            let d = drain(&simple, &mut pcm_bytes) + 1; // +1: the frame we just read is stale
             dropped_total += d;
             log::warn!(
                 "Fell behind; dropped {d} frames ({} ms) to restore latency",
@@ -123,7 +114,6 @@ pub fn run(
             );
         }
 
-        // little-endian bytes -> i16
         for (i, chunk) in pcm_bytes.chunks_exact(2).enumerate() {
             pcm_i16[i] = i16::from_le_bytes([chunk[0], chunk[1]]);
         }

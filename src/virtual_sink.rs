@@ -1,18 +1,3 @@
-//! PipeWire virtual sink — a native in-process adapter node.
-//!
-//! This is the biggest simplification over the Python version. We hold a
-//! `pipewire::node::Node` proxy for the lifetime of our process; when we drop
-//! it (either on clean shutdown or on process death), pipewire destroys the
-//! node. That means no `object.linger=true`, no stale-node cleanup on next
-//! startup, no `pw-cli` subprocess, no `pw-dump`/`pactl` output parsing —
-//! all of which the Python side needed.
-//!
-//!   node.virtual=false       — GNOME hides virtual=true
-//!   device.class=sound       — WirePlumber treats it as a real device
-//!   media.class=Audio/Sink
-//!   node.force-quantum=256   — capture-latency ceiling (~5.3 ms @48k)
-//!   monitor.channel-volumes=true
-
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -43,8 +28,7 @@ impl VirtualSink {
             .spawn(move || run_pw_thread(sink_name_c, description, quit_rx, ready_tx))
             .expect("spawn pw-sink thread");
 
-        // Wait for the node to be bound on the server. Bounded so a hung
-        // pipewire server can't hang the CLI's startup indefinitely.
+        // Bounded so a hung pipewire server can't wedge the CLI at startup.
         match ready_rx.recv_timeout(Duration::from_secs(10)) {
             Ok(r) => r?,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -102,6 +86,11 @@ fn run_pw_thread(
 ) {
     pw::init();
 
+    // Property rationales:
+    //   node.virtual=false     — GNOME hides sinks with virtual=true
+    //   device.class=sound     — WirePlumber treats the node as a real device
+    //   audio.position=[FL FR] — without this, may be misdetected as mono
+    //   node.force-quantum=256 — capture-latency ceiling (~5.3 ms @48k)
     let props = properties! {
         "factory.name" => "support.null-audio-sink",
         "node.name" => sink_name.as_str(),
@@ -115,12 +104,10 @@ fn run_pw_thread(
         "node.force-quantum" => "256",
     };
 
-    // The proxy MUST outlive the main loop — dropping it destroys the node on
-    // the server. Since Node isn't Send, everything stays on this thread; the
-    // closure just lets us `?` through the init sequence.
-    // The roundtrip (`core.sync(0)`) ensures the server has actually processed
-    // the create before we signal readiness (otherwise pulse-simple may race
-    // and fail to open the monitor). See examples/roundtrip.rs in pipewire-rs.
+    // `Node` isn't `Send`, so everything stays on this thread. The proxy must
+    // outlive the main loop (dropping it destroys the server-side node), and
+    // the `core.sync(0)` roundtrip is needed before signalling readiness or
+    // pulse-simple may race and fail to open the monitor.
     let init: Result<_> = (|| {
         let mainloop = MainLoop::new(None).context("MainLoop")?;
         let context = pw::context::Context::new(&mainloop).context("Context")?;
@@ -151,8 +138,7 @@ fn run_pw_thread(
     let _quit_source = quit_rx.attach(mainloop.loop_(), move |_| mainloop_c.quit());
 
     mainloop.run();
-    // node dropped here → node destroyed on server → sink disappears from GNOME
-    drop(node);
+    drop(node); // destroys the server-side node → sink disappears from GNOME
     log::debug!("pw-sink thread exiting");
 }
 

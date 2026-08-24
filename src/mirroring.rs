@@ -1,9 +1,5 @@
-//! Cast mirroring control: LAUNCH the receiver app, then OFFER/ANSWER
-//! stream negotiation over the (misleadingly-named) `webrtc` namespace —
-//! the payloads are Cast-proprietary JSON, not SDP/WebRTC.
-//!
-//! The receiver namespace flow gives us the `transportId` of the launched
-//! app, which is the destination for the OFFER.
+//! Mirroring control: LAUNCH the app, then OFFER/ANSWER on the
+//! `webrtc` namespace (Cast-proprietary JSON, not SDP/WebRTC).
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -16,22 +12,20 @@ use crate::cast_channel::{
     CastChannel, CastMessage, NS_RECEIVER, NS_WEBRTC, PLATFORM_RECEIVER_ID,
 };
 
-/// Cast Streaming receiver apps (openscreen: `cast_streaming_app_ids.h`).
+/// openscreen `cast_streaming_app_ids.h`. Audio-only devices reject the
 pub const APP_MIRRORING_AUDIO_VIDEO: &str = "0F5096E8";
 pub const APP_MIRRORING_AUDIO_ONLY: &str = "85CDB22F";
 
-// Wire-fixed offer parameters. These are constants because no caller has any
-// business overriding them: the encoder (`opus_enc`) and the RTP layer
-// choice (LowDelay + 10ms Opus, `targetDelay=0`, PT=127).
 pub const OPUS_CODEC: &str = "opus";
 pub const OPUS_SAMPLE_RATE: u32 = 48_000;
 pub const OPUS_CHANNELS: u32 = 2;
 pub const OPUS_BITRATE: i32 = 128_000;
 pub const RTP_PAYLOAD_TYPE: u8 = 127;
-/// Target playout delay in ms. `0` is intentional (not "device default" —
+/// `0` means 0ms, not "device default" — the default (400ms) only applies
+/// when the field is absent.
 pub const TARGET_DELAY_MS: u32 = 0;
 
-/// Which mirroring app to launch. Audio-only speakers reject the video
+/// Audio-only speakers reject the video app with LaunchFailure(SYSTEM_ERROR);
 #[derive(Debug, Clone, Copy)]
 pub enum StreamMode {
     AudioOnly,
@@ -47,9 +41,6 @@ impl StreamMode {
     }
 }
 
-/// Per-session state offered to the receiver. Everything else about the
-/// audio stream (codec/rate/channels/bitrate/PT/target-delay) is fixed —
-/// see the `OPUS_*` / `RTP_*` / `TARGET_DELAY_MS` constants above.
 pub struct StreamOffer {
     pub ssrc: u32,
     pub aes_key: [u8; 16],
@@ -76,15 +67,11 @@ pub struct StreamAnswer {
     pub send_indexes: Vec<u64>,
 }
 
-/// Handle to a launched mirroring app. `transport_id` is the destination for
-/// app-level messages (CONNECT, OFFER); `session_id` is what the platform
-/// receiver expects in a `STOP` on shutdown.
 pub struct MirroringSession {
     pub transport_id: String,
     pub session_id: String,
 }
 
-/// Launch the mirroring receiver app and return its transport + session ids.
 pub fn launch_mirroring(
     channel: &CastChannel,
     incoming: &Receiver<CastMessage>,
@@ -95,9 +82,6 @@ pub fn launch_mirroring(
     let request_id = new_request_id();
 
     log::info!("Launching mirroring app {app_id} ({mode:?})");
-    // Fields match Chromium `CreateLaunchRequest` (`cast_message_util.cc`);
-    // `language` and `supportedAppTypes` are always emitted there and the
-    // receiver may gate app-selection / locale behavior on them.
     channel.send_json(
         PLATFORM_RECEIVER_ID,
         NS_RECEIVER,
@@ -111,13 +95,9 @@ pub fn launch_mirroring(
     )?;
 
     wait_for_json_message(incoming, NS_RECEIVER, Instant::now() + timeout, |v| {
-        // Filter by requestId: LAUNCH responses echo the id we sent. A bare
-        // RECEIVER_STATUS broadcast (no matching id) may describe a *leftover*
-        // mirroring session from a crashed previous run — same app_id, but the
-        // stale transport_id/session_id is already dead. Matching by app_id
-        // alone would latch onto that ghost. Chromium's `LaunchSession` fires
-        // LAUNCH and trusts the receiver to replace the running instance
-        // (`cast_activity_manager.cc`); we wait for that specific reply.
+        // Filter by requestId, not app_id: a RECEIVER_STATUS broadcast may
+        // describe a leftover session from a crashed prior run (same app_id,
+        // dead transport/sessionId).
         if v.get("requestId").and_then(|r| r.as_u64()) != Some(request_id) {
             return None;
         }
@@ -153,9 +133,7 @@ pub fn launch_mirroring(
     .context("Timeout launching mirroring app")
 }
 
-/// Send a receiver-namespace `STOP` for the given `session_id`. Fire-and-forget:
-/// we don't wait for the RECEIVER_STATUS that follows, since this is only ever
-/// called during shutdown when we're about to drop the socket.
+/// Fire-and-forget; only called during shutdown when the socket is about to drop.
 pub fn send_stop(channel: &CastChannel, session_id: &str) -> Result<()> {
     channel.send_json(
         PLATFORM_RECEIVER_ID,
@@ -168,7 +146,6 @@ pub fn send_stop(channel: &CastChannel, session_id: &str) -> Result<()> {
     )
 }
 
-/// Send OFFER on the webrtc namespace to `transport_id` and wait for ANSWER.
 pub fn send_offer(
     channel: &CastChannel,
     incoming: &Receiver<CastMessage>,
@@ -177,10 +154,8 @@ pub fn send_offer(
     timeout: Duration,
 ) -> Result<StreamAnswer> {
     let seq_num = new_request_id() as i64;
-    // Field set mirrors openscreen `Stream::ToJson` / `AudioStream::ToJson`
-    // (`cast/streaming/public/offer_messages.cc`). Sample rate is conveyed via
-    // `timeBase = "1/48000"` — openscreen does not emit a separate `sampleRate`
-    // key, so we don't either.
+    // openscreen `AudioStream::ToJson`: sample rate rides in `timeBase`,
+    // not a separate `sampleRate` key.
     let payload = json!({
         "type": "OFFER",
         "seqNum": seq_num,
@@ -237,14 +212,8 @@ fn parse_answer(v: &Value) -> Result<StreamAnswer> {
     Ok(StreamAnswer { udp_port, send_indexes })
 }
 
-/// Wait for a JSON message on `namespace` matching `predicate`, up to `deadline`.
-/// The predicate returns:
-///   - `None` — not the message we want, keep waiting.
-///   - `Some(Ok(t))` — success, return `t`.
-///   - `Some(Err(e))` — terminal error observed in the reply, bail with `e`.
-///
-/// Non-JSON payloads on the target namespace are silently dropped (the receiver
-/// occasionally interleaves other messages we don't care about).
+/// Predicate returns `None` to keep waiting, `Some(Ok(_))` for success,
+/// `Some(Err(_))` to bail. Non-JSON payloads on `namespace` are dropped.
 fn wait_for_json_message<T>(
     rx: &Receiver<CastMessage>,
     namespace: &str,
