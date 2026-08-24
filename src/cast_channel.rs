@@ -15,12 +15,13 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use native_tls::TlsConnector;
+use rand::Rng;
 use serde_json::{json, Value};
 
 pub const NS_CONNECTION: &str = "urn:x-cast:com.google.cast.tp.connection";
@@ -29,7 +30,17 @@ pub const NS_RECEIVER: &str = "urn:x-cast:com.google.cast.receiver";
 pub const NS_WEBRTC: &str = "urn:x-cast:com.google.cast.webrtc";
 
 pub const PLATFORM_RECEIVER_ID: &str = "receiver-0";
-pub const LOCAL_SENDER_ID: &str = "sender-0";
+
+/// Per-process sender id, matching Chromium's `CastMessageHandler` convention
+/// (`sender-<rand 0..1M>`). A fresh identity per run means the receiver treats
+/// our virtual connections as brand-new, so a leftover virtual connection from
+/// a crashed previous run (which the receiver may still be holding open) does
+/// not collide with ours. Generated lazily so tests that construct
+/// `CastMessage`s by hand still see a deterministic literal.
+pub fn local_sender_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| format!("sender-{}", rand::rng().random_range(0..1_000_000)))
+}
 
 /// Virtual-connection close reason. Mirrors Chromium's `kVirtualConnectionClosedByPeer`
 /// enum value in `cast_message_util.h`. Sent in CLOSE payloads so the receiver
@@ -68,7 +79,7 @@ impl CastChannel {
     /// Convenience: send a JSON payload.
     pub fn send_json(&self, destination: &str, namespace: &str, payload: &Value) -> Result<()> {
         self.send(CastMessage {
-            source: LOCAL_SENDER_ID.into(),
+            source: local_sender_id().into(),
             destination: destination.into(),
             namespace: namespace.into(),
             payload: payload.to_string(),
@@ -132,7 +143,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     write_message(
         &mut tls,
         &CastMessage {
-            source: LOCAL_SENDER_ID.into(),
+            source: local_sender_id().into(),
             destination: PLATFORM_RECEIVER_ID.into(),
             namespace: NS_CONNECTION.into(),
             payload: json!({"type": "CONNECT"}).to_string(),
@@ -192,7 +203,7 @@ fn dispatcher(
                         // to the caller — it is dispatcher-internal noise.
                         if payload_type_is(&msg.payload, "PING") {
                             let pong = CastMessage {
-                                source: LOCAL_SENDER_ID.into(),
+                                source: local_sender_id().into(),
                                 destination: msg.source.clone(),
                                 namespace: NS_HEARTBEAT.into(),
                                 payload: r#"{"type":"PONG"}"#.into(),
@@ -230,7 +241,7 @@ fn dispatcher(
         // 4. Periodic heartbeat PING to keep the socket alive
         if last_ping.elapsed() >= HEARTBEAT_INTERVAL {
             let ping = CastMessage {
-                source: LOCAL_SENDER_ID.into(),
+                source: local_sender_id().into(),
                 destination: PLATFORM_RECEIVER_ID.into(),
                 namespace: NS_HEARTBEAT.into(),
                 payload: r#"{"type":"PING"}"#.into(),

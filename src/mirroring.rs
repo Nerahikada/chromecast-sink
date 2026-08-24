@@ -106,7 +106,16 @@ pub fn launch_mirroring(
     )?;
 
     wait_for_json_message(incoming, NS_RECEIVER, Instant::now() + timeout, |v| {
-        // RECEIVER_STATUS: {applications: [{appId, transportId, sessionId, ...}]}
+        // Filter by requestId: LAUNCH responses echo the id we sent. A bare
+        // RECEIVER_STATUS broadcast (no matching id) may describe a *leftover*
+        // mirroring session from a crashed previous run — same app_id, but the
+        // stale transport_id/session_id is already dead. Matching by app_id
+        // alone would latch onto that ghost. Chromium's `LaunchSession` fires
+        // LAUNCH and trusts the receiver to replace the running instance
+        // (`cast_activity_manager.cc`); we wait for that specific reply.
+        if v.get("requestId").and_then(|r| r.as_u64()) != Some(request_id) {
+            return None;
+        }
         match v.get("type").and_then(|t| t.as_str()) {
             Some("RECEIVER_STATUS") => v
                 .pointer("/status/applications")
