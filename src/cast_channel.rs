@@ -31,6 +31,12 @@ pub const NS_WEBRTC: &str = "urn:x-cast:com.google.cast.webrtc";
 
 pub const PLATFORM_RECEIVER_ID: &str = "receiver-0";
 
+/// Virtual-connection close reason. Mirrors Chromium's `kVirtualConnectionClosedByPeer`
+/// enum value in `cast_message_util.h`. Sent in CLOSE payloads so the receiver
+/// classifies our shutdown as an intentional peer close rather than an abrupt
+/// network drop (`CreateVirtualConnectionClose` in `cast_message_util.cc`).
+const CLOSE_REASON_CLOSED_BY_PEER: u32 = 5;
+
 /// Per-process sender id, matching Chromium's `CastMessageHandler` convention
 /// (`sender-<rand 0..1M>`). A fresh identity per run means the receiver treats
 /// our virtual connections as brand-new, so a leftover virtual connection from
@@ -42,11 +48,41 @@ pub fn local_sender_id() -> &'static str {
     ID.get_or_init(|| format!("sender-{}", rand::rng().random_range(0..1_000_000)))
 }
 
-/// Virtual-connection close reason. Mirrors Chromium's `kVirtualConnectionClosedByPeer`
-/// enum value in `cast_message_util.h`. Sent in CLOSE payloads so the receiver
-/// classifies our shutdown as an intentional peer close rather than an abrupt
-/// network drop (`CreateVirtualConnectionClose` in `cast_message_util.cc`).
-const CLOSE_REASON_CLOSED_BY_PEER: u32 = 5;
+/// Build the CONNECT payload in the shape Chromium's `CreateVirtualConnectionRequest`
+/// emits (`components/media_router/common/providers/cast/channel/cast_message_util.cc`).
+/// A bare `{"type":"CONNECT"}` is legal enough to open a virtual connection,
+/// but Chromium always sends the full set below and the receiver may classify
+/// the connection (e.g. strong-vs-invisible) using these fields.
+///
+/// Enum values are the ones from `cast_message_util.h`:
+/// - `connType: 0` = `VirtualConnectionType::kStrong` (regular sender; kInvisible=2)
+/// - `senderInfo.sdkType: 2` = `kVirtualConnectSdkType`
+/// - `senderInfo.platform: 6` = Linux (3=Win, 4=Apple, 5=CrOS, 0=other)
+/// - `senderInfo.connectionType: 1` = `kVirtualConnectTypeLocal` (LAN)
+///
+/// `userAgent` / `systemVersion` values are just labels the receiver logs;
+/// the exact strings don't affect wire framing — we advertise as this crate.
+fn build_connect_payload() -> Value {
+    const USER_AGENT: &str = concat!(
+        "chromecast-sink/",
+        env!("CARGO_PKG_VERSION"),
+        " (Linux; Rust)"
+    );
+    json!({
+        "type": "CONNECT",
+        "userAgent": USER_AGENT,
+        "connType": 0,
+        "origin": {},
+        "senderInfo": {
+            "sdkType": 2,
+            "version": env!("CARGO_PKG_VERSION"),
+            "browserVersion": env!("CARGO_PKG_VERSION"),
+            "platform": 6,
+            "connectionType": 1,
+            "systemVersion": "Linux",
+        },
+    })
+}
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Read poll interval for the dispatcher loop.
@@ -88,7 +124,7 @@ impl CastChannel {
 
     /// Send CONNECT to a destination (must be done before any app message).
     pub fn connect_transport(&self, destination: &str) -> Result<()> {
-        self.send_json(destination, NS_CONNECTION, &json!({"type": "CONNECT"}))
+        self.send_json(destination, NS_CONNECTION, &build_connect_payload())
     }
 
     /// Send CLOSE on the connection namespace — signals the receiver that we
@@ -146,7 +182,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
             source: local_sender_id().into(),
             destination: PLATFORM_RECEIVER_ID.into(),
             namespace: NS_CONNECTION.into(),
-            payload: json!({"type": "CONNECT"}).to_string(),
+            payload: build_connect_payload().to_string(),
         },
     )?;
 

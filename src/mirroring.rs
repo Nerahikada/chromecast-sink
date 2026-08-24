@@ -95,6 +95,9 @@ pub fn launch_mirroring(
     let request_id = new_request_id();
 
     log::info!("Launching mirroring app {app_id} ({mode:?})");
+    // Fields match Chromium `CreateLaunchRequest` (`cast_message_util.cc`);
+    // `language` and `supportedAppTypes` are always emitted there and the
+    // receiver may gate app-selection / locale behavior on them.
     channel.send_json(
         PLATFORM_RECEIVER_ID,
         NS_RECEIVER,
@@ -102,6 +105,8 @@ pub fn launch_mirroring(
             "type": "LAUNCH",
             "requestId": request_id,
             "appId": app_id,
+            "language": "en-US",
+            "supportedAppTypes": ["WEB"],
         }),
     )?;
 
@@ -172,6 +177,10 @@ pub fn send_offer(
     timeout: Duration,
 ) -> Result<StreamAnswer> {
     let seq_num = new_request_id() as i64;
+    // Field set mirrors openscreen `Stream::ToJson` / `AudioStream::ToJson`
+    // (`cast/streaming/public/offer_messages.cc`). Sample rate is conveyed via
+    // `timeBase = "1/48000"` — openscreen does not emit a separate `sampleRate`
+    // key, so we don't either.
     let payload = json!({
         "type": "OFFER",
         "seqNum": seq_num,
@@ -181,6 +190,7 @@ pub fn send_offer(
                 "index": 0,
                 "type": "audio_source",
                 "codecName": OPUS_CODEC,
+                "codecParameter": "",
                 "rtpProfile": "cast",
                 "rtpPayloadType": RTP_PAYLOAD_TYPE,
                 "ssrc": offer.ssrc,
@@ -188,8 +198,8 @@ pub fn send_offer(
                 "aesKey": hex::encode(offer.aes_key),
                 "aesIvMask": hex::encode(offer.aes_iv_mask),
                 "timeBase": format!("1/{}", OPUS_SAMPLE_RATE),
+                "receiverRtcpEventLog": false,
                 "bitRate": OPUS_BITRATE,
-                "sampleRate": OPUS_SAMPLE_RATE,
                 "channels": OPUS_CHANNELS,
             }],
         },

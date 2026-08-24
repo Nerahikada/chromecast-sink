@@ -88,10 +88,20 @@ impl CastRtpSender {
         buf
     }
 
-    /// Build one Cast RTP packet (marker bit set, keyframe flag set, no extensions,
-    /// packet_id/max_packet_id = 0).
+    /// Build one Cast RTP packet: 12 B standard RTP header + 7 B Cast extension
+    /// header + encrypted payload.
+    ///
+    /// Layout matches openscreen `RtpPacketizer::GeneratePacket`
+    /// (`cast/streaming/impl/rtp_packetizer.cc`): the reference-frame-id bit
+    /// (`kRtpHasReferenceFrameIdBitMask = 0x40`) is set **unconditionally** on
+    /// every packet, so `ref_frame_id` at offset 18 is always present. For an
+    /// independently-decodable frame (which every audio Opus frame is), the
+    /// canonical convention documented in `cast/streaming/public/encoded_frame.h`
+    /// is `referenced_frame_id == frame_id`, so byte 18 mirrors byte 13.
+    /// Single-packet frame → `packet_id = max_packet_id = 0`.
     fn build_packet(&self, encrypted: &[u8], frame_id: u32) -> Vec<u8> {
-        let mut pkt = Vec::with_capacity(18 + encrypted.len());
+        const CAST_EXT_HEADER_LEN: usize = 7;
+        let mut pkt = Vec::with_capacity(12 + CAST_EXT_HEADER_LEN + encrypted.len());
         let v_p_x_cc: u8 = 0x80;
         let m_pt: u8 = 0x80 | (self.config.payload_type & 0x7F);
         let seq = (frame_id & 0xFFFF) as u16;
@@ -103,11 +113,13 @@ impl CastRtpSender {
         pkt.extend_from_slice(&ts.to_be_bytes());
         pkt.extend_from_slice(&self.config.ssrc.to_be_bytes());
 
-        // Cast extension: keyframe|ext_count=0, frame_id u8, packet_id=0, max_packet_id=0
-        pkt.push(0x80);
-        pkt.push((frame_id & 0xFF) as u8);
-        pkt.extend_from_slice(&0u16.to_be_bytes());
-        pkt.extend_from_slice(&0u16.to_be_bytes());
+        // Cast extension: keyframe (0x80) | ref-frame-present (0x40); ext_count = 0.
+        pkt.push(0x80 | 0x40);
+        let frame_id_u8 = (frame_id & 0xFF) as u8;
+        pkt.push(frame_id_u8);
+        pkt.extend_from_slice(&0u16.to_be_bytes()); // packet_id
+        pkt.extend_from_slice(&0u16.to_be_bytes()); // max_packet_id
+        pkt.push(frame_id_u8); // referenced_frame_id = frame_id (independent frame)
 
         pkt.extend_from_slice(encrypted);
         pkt
@@ -260,10 +272,11 @@ mod tests {
     }
 
     #[test]
-    fn packet_layout_matches_python() {
+    fn packet_layout_matches_openscreen() {
         let s = CastRtpSender::new(cfg()).unwrap();
         let pkt = s.build_packet(b"payload", 5);
-        assert_eq!(pkt.len(), 18 + 7);
+        // 12 B standard RTP header + 7 B Cast extension header + payload.
+        assert_eq!(pkt.len(), 19 + 7);
         assert_eq!(pkt[0], 0x80);
         assert_eq!(pkt[1], 0xFF); // marker + payload_type 127
         assert_eq!(u16::from_be_bytes([pkt[2], pkt[3]]), 5);
@@ -272,11 +285,13 @@ mod tests {
             5 * OPUS_SAMPLES_PER_FRAME
         );
         assert_eq!(u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]), 0xDEAD_BEEF);
-        assert_eq!(pkt[12], 0x80);
-        assert_eq!(pkt[13], 5);
-        assert_eq!(u16::from_be_bytes([pkt[14], pkt[15]]), 0);
-        assert_eq!(u16::from_be_bytes([pkt[16], pkt[17]]), 0);
-        assert_eq!(&pkt[18..], b"payload");
+        // Cast extension: keyframe (0x80) | ref-frame-present (0x40), no extensions.
+        assert_eq!(pkt[12], 0xC0);
+        assert_eq!(pkt[13], 5); // frame_id
+        assert_eq!(u16::from_be_bytes([pkt[14], pkt[15]]), 0); // packet_id
+        assert_eq!(u16::from_be_bytes([pkt[16], pkt[17]]), 0); // max_packet_id
+        assert_eq!(pkt[18], 5); // referenced_frame_id (== frame_id for independent frame)
+        assert_eq!(&pkt[19..], b"payload");
     }
 
     #[test]
@@ -292,10 +307,14 @@ mod tests {
         assert_eq!(n, expected);
     }
 
-    // ---- Differential tests against the Python reference implementation ----
-    // Expected hex generated from src/chromecast_sink/cast_rtp.py at commit
-    // acfdb6c (the field-verified Python version), with key=00..0f and
-    // iv_mask=f0..ff. Any mismatch here means we broke wire compatibility.
+    // ---- Wire-compat differential tests ----
+    // Fixtures use key=00..0f, iv_mask=f0..ff. The encryption vectors were
+    // generated from the original Python reference at commit acfdb6c but are
+    // byte-identical to any conformant AES-128-CTR implementation (nonce
+    // construction matches openscreen `frame_crypto.cc`). The packet-layout
+    // hex was recomputed by hand against openscreen `RtpPacketizer` — 12 B
+    // RTP header + 7 B Cast extension including the always-present
+    // reference-frame-id byte.
 
     fn diff_cfg() -> Config {
         let mut key = [0u8; 16];
@@ -329,16 +348,20 @@ mod tests {
     }
 
     #[test]
-    fn packet_matches_python_reference() {
+    fn packet_matches_openscreen_layout() {
         let s = CastRtpSender::new(diff_cfg()).unwrap();
+        // 12B RTP: 80 ff | seq | ts | ssrc
+        // 7B Cast: C0 (kf|ref) | frame_id_u8 | 0000 (pkt) | 0000 (max_pkt) | ref_id_u8
         assert_eq!(
             hex::encode(s.build_packet(b"payload", 5)),
-            "80ff000500000960deadbeef8005000000007061796c6f6164"
+            "80ff000500000960deadbeefc00500000000057061796c6f6164"
         );
-        // frame_id > 255 exercises the u8 truncation in the Cast extension
+        // frame_id > 255 exercises the u8 truncation in the Cast extension —
+        // both `frame_id` (offset 13) and `referenced_frame_id` (offset 18)
+        // truncate to the same low 8 bits (300 & 0xFF = 0x2C).
         assert_eq!(
             hex::encode(s.build_packet(b"xy", 300)),
-            "80ff012c00023280deadbeef802c000000007879"
+            "80ff012c00023280deadbeefc02c000000002c7879"
         );
     }
 
