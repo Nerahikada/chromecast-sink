@@ -76,13 +76,21 @@ pub struct StreamAnswer {
     pub send_indexes: Vec<u64>,
 }
 
-/// Launch the mirroring receiver app and return its `transport_id`.
+/// Handle to a launched mirroring app. `transport_id` is the destination for
+/// app-level messages (CONNECT, OFFER); `session_id` is what the platform
+/// receiver expects in a `STOP` on shutdown.
+pub struct MirroringSession {
+    pub transport_id: String,
+    pub session_id: String,
+}
+
+/// Launch the mirroring receiver app and return its transport + session ids.
 pub fn launch_mirroring(
     channel: &CastChannel,
     incoming: &Receiver<CastMessage>,
     mode: StreamMode,
     timeout: Duration,
-) -> Result<String> {
+) -> Result<MirroringSession> {
     let app_id = mode.app_id();
     let request_id = new_request_id();
 
@@ -109,19 +117,41 @@ pub fn launch_mirroring(
                     })
                 })
                 .map(|app| {
-                    let transport = app
+                    let transport_id = app
                         .get("transportId")
                         .and_then(|s| s.as_str())
                         .ok_or_else(|| anyhow!("no transportId"))?
                         .to_string();
-                    log::info!("Mirroring app {app_id} ready (transport {transport})");
-                    Ok(transport)
+                    let session_id = app
+                        .get("sessionId")
+                        .and_then(|s| s.as_str())
+                        .ok_or_else(|| anyhow!("no sessionId"))?
+                        .to_string();
+                    log::info!(
+                        "Mirroring app {app_id} ready (transport {transport_id}, session {session_id})"
+                    );
+                    Ok(MirroringSession { transport_id, session_id })
                 }),
             Some("LAUNCH_ERROR") => Some(Err(anyhow!("Receiver rejected LAUNCH: {v}"))),
             _ => None,
         }
     })
     .context("Timeout launching mirroring app")
+}
+
+/// Send a receiver-namespace `STOP` for the given `session_id`. Fire-and-forget:
+/// we don't wait for the RECEIVER_STATUS that follows, since this is only ever
+/// called during shutdown when we're about to drop the socket.
+pub fn send_stop(channel: &CastChannel, session_id: &str) -> Result<()> {
+    channel.send_json(
+        PLATFORM_RECEIVER_ID,
+        NS_RECEIVER,
+        &json!({
+            "type": "STOP",
+            "requestId": new_request_id(),
+            "sessionId": session_id,
+        }),
+    )
 }
 
 /// Send OFFER on the webrtc namespace to `transport_id` and wait for ANSWER.

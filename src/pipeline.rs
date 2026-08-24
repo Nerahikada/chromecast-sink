@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::capture;
-use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION};
+use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION, PLATFORM_RECEIVER_ID};
 use crate::cast_rtp::{self, CastRtpSender};
 use crate::discovery::{self, Device};
 use crate::mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
@@ -50,9 +50,8 @@ pub fn run_with_device(device: Device) -> Result<()> {
     // Phase 5: launch mirroring receiver
     println!("Launching mirroring receiver...");
     let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };
-    let transport =
-        mirroring::launch_mirroring(&channel, &incoming, mode, TIMEOUT)?;
-    channel.connect_transport(&transport)?;
+    let session = mirroring::launch_mirroring(&channel, &incoming, mode, TIMEOUT)?;
+    channel.connect_transport(&session.transport_id)?;
 
     // Phase 6: OFFER / ANSWER
     let offer = StreamOffer::default();
@@ -61,7 +60,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
         OPUS_BITRATE / 1000,
         TARGET_DELAY_MS,
     );
-    let answer = mirroring::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
+    let answer = mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
     if !answer.send_indexes.contains(&0) {
         bail!(
             "Chromecast did not accept the audio stream (sendIndexes={:?})",
@@ -89,7 +88,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
     // Watch the Cast channel: stop when the receiver CLOSEs our session
     // (e.g. someone else starts casting) or the TLS connection dies. Without
     // this, the pipeline would keep sending UDP into the void forever.
-    let monitor = spawn_session_monitor(incoming, transport.clone(), Arc::clone(&stop));
+    let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
 
     // Phase 9: capture in this thread (the RTCP thread runs in the background)
     println!(
@@ -110,10 +109,28 @@ pub fn run_with_device(device: Device) -> Result<()> {
     // drops its incoming sender, which unblocks the session monitor. This
     // must happen before `monitor.join()` or the join deadlocks.
     sender.stop();
+    graceful_shutdown(&channel, &session.transport_id, &session.session_id);
     drop(channel);
     let _ = monitor.join();
     drop(sink); // pipewire node destroyed here
     capture_result
+}
+
+/// Emit a clean shutdown handshake on the Cast v2 channel so the receiver
+/// unloads the mirroring app promptly instead of noticing us via socket
+/// timeout (tens of seconds during which relaunches can collide).
+///
+/// Order matches Chromium `cast_activity_manager.cc::TerminateSession`:
+/// STOP first — this is what actually unloads the app (CLOSE alone only tears
+/// down the virtual channel; openscreen's `ReceiverSession` has no
+/// self-terminate on close). Then CLOSE the app-level virtual connection,
+/// then CLOSE `receiver-0`. All fire-and-forget: the dispatcher drains them
+/// before it exits (see `cast_channel::dispatcher`), and native-tls sends
+/// `close_notify` when the stream drops.
+fn graceful_shutdown(channel: &cast_channel::CastChannel, transport_id: &str, session_id: &str) {
+    let _ = mirroring::send_stop(channel, session_id);
+    let _ = channel.close_transport(transport_id);
+    let _ = channel.close_transport(PLATFORM_RECEIVER_ID);
 }
 
 /// Session-death watchdog: sets `stop` when the receiver closes our virtual

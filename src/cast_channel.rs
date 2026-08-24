@@ -31,6 +31,12 @@ pub const NS_WEBRTC: &str = "urn:x-cast:com.google.cast.webrtc";
 pub const PLATFORM_RECEIVER_ID: &str = "receiver-0";
 pub const LOCAL_SENDER_ID: &str = "sender-0";
 
+/// Virtual-connection close reason. Mirrors Chromium's `kVirtualConnectionClosedByPeer`
+/// enum value in `cast_message_util.h`. Sent in CLOSE payloads so the receiver
+/// classifies our shutdown as an intentional peer close rather than an abrupt
+/// network drop (`CreateVirtualConnectionClose` in `cast_message_util.cc`).
+const CLOSE_REASON_CLOSED_BY_PEER: u32 = 5;
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Read poll interval for the dispatcher loop.
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
@@ -74,6 +80,22 @@ impl CastChannel {
         self.send_json(destination, NS_CONNECTION, &json!({"type": "CONNECT"}))
     }
 
+    /// Send CLOSE on the connection namespace — signals the receiver that we
+    /// are tearing down the virtual connection to `destination`. Used at
+    /// shutdown for both the mirroring transport and `receiver-0`.
+    ///
+    /// Payload matches Chromium's `CreateVirtualConnectionClose`
+    /// (`cast_message_util.cc`): `{"type":"CLOSE","reasonCode":5}` — the
+    /// reasonCode is what tells the receiver this is an intentional peer close
+    /// rather than an abrupt network teardown. No `requestId` (CLOSE is
+    /// unidirectional).
+    pub fn close_transport(&self, destination: &str) -> Result<()> {
+        self.send_json(
+            destination,
+            NS_CONNECTION,
+            &json!({"type": "CLOSE", "reasonCode": CLOSE_REASON_CLOSED_BY_PEER}),
+        )
+    }
 }
 
 impl Drop for CastChannel {
@@ -215,6 +237,19 @@ fn dispatcher(
             };
             let _ = write_message(&mut tls, &ping);
             last_ping = Instant::now();
+        }
+    }
+
+    // Final drain: `CastChannel::drop` sets `stop` after the pipeline has
+    // enqueued shutdown messages (STOP + two CLOSEs), so any messages queued
+    // between the last loop iteration and the `stop` flip would otherwise be
+    // dropped on the floor. Flush them synchronously before releasing the TLS
+    // stream (whose Drop sends close_notify) so the receiver sees a clean
+    // handshake.
+    while let Ok(msg) = outbound.try_recv() {
+        if let Err(e) = write_message(&mut tls, &msg) {
+            log::debug!("Cast socket write error during shutdown drain: {e}");
+            break;
         }
     }
     log::debug!("Cast dispatcher exiting");

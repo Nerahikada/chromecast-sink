@@ -93,11 +93,11 @@ fn main() -> Result<()> {
 
     println!("Connecting to {host}...");
     let (channel, incoming) = cast_channel::connect(&host)?;
-    let transport = mirroring::launch_mirroring(&channel, &incoming, StreamMode::AudioOnly, TIMEOUT)?;
-    channel.connect_transport(&transport)?;
+    let session = mirroring::launch_mirroring(&channel, &incoming, StreamMode::AudioOnly, TIMEOUT)?;
+    channel.connect_transport(&session.transport_id)?;
 
     let offer = StreamOffer::default();
-    let answer = mirroring::send_offer(&channel, &incoming, &transport, &offer, TIMEOUT)?;
+    let answer = mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
     assert!(answer.send_indexes.contains(&0), "audio stream not accepted");
     println!("ANSWER: udp_port={} send_indexes={:?}", answer.udp_port, answer.send_indexes);
 
