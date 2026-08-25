@@ -10,6 +10,10 @@ const SERVICE: &str = "_googlecast._tcp.local.";
 /// Verified on a real Nest Mini (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
 const CA_VIDEO_OUT: u32 = 0x01;
 
+/// Exit an untargeted browse early if no new device resolves within this window.
+/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s (service_daemon.rs:2578-2620); 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
+const QUIET: Duration = Duration::from_millis(2500);
+
 #[derive(Debug, Clone)]
 pub struct Device {
     pub friendly_name: String,
@@ -45,7 +49,7 @@ fn is_audio_only_model(model: &str) -> bool {
         || m.contains("home max")
 }
 
-/// If `wanted_name` is given, returns as soon as it's found; otherwise waits the full timeout.
+/// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not); otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
 pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
     log::debug!("mDNS: browsing {SERVICE} for up to {timeout:?}");
     let daemon = ServiceDaemon::new().context("start mdns daemon")?;
@@ -53,6 +57,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
 
     let deadline = Instant::now() + timeout;
     let mut devices: HashMap<String, Device> = HashMap::new();
+    let mut last_new_at = Instant::now();
 
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -71,7 +76,10 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
                     let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
-                    devices.insert(dev.friendly_name.clone(), dev);
+                    let is_new = devices.insert(dev.friendly_name.clone(), dev).is_none();
+                    if is_new {
+                        last_new_at = Instant::now();
+                    }
                     if matched_wanted {
                         break;
                     }
@@ -88,6 +96,10 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     break;
                 }
             }
+        }
+        // Only shortcut the untargeted list case; a wanted_name miss must wait the full timeout so a slow-responding target isn't declared missing prematurely.
+        if wanted_name.is_none() && last_new_at.elapsed() >= QUIET {
+            break;
         }
     }
 
