@@ -10,7 +10,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use native_tls::TlsConnector;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
 use rand::Rng;
 use serde_json::{json, Value};
 
@@ -119,17 +122,29 @@ impl Drop for CastChannel {
 }
 
 pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
-    let connector = TlsConnector::builder()
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
-        .build()?;
-    let tcp = TcpStream::connect((host, 8009))
+    // ring provider is process-global; Err on subsequent calls is fine.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let mut tcp = TcpStream::connect((host, 8009))
         .with_context(|| format!("TCP connect to {host}:8009"))?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
-    let mut tls = connector.connect(host, tcp).context("TLS handshake")?;
+
+    let provider = CryptoProvider::get_default()
+        .expect("rustls default CryptoProvider not installed")
+        .clone();
+    let cfg = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
+        .with_no_client_auth();
+    let name = ServerName::try_from(host)
+        .map(|n| n.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
+    let mut conn = ClientConnection::new(Arc::new(cfg), name).context("TLS client init")?;
+    conn.complete_io(&mut tcp).context("TLS handshake")?;
+    let mut tls = StreamOwned::new(conn, tcp);
     // Post-handshake: short poll so the dispatcher can wake to check `stop` and drain outbound.
-    tls.get_ref().set_read_timeout(Some(READ_TIMEOUT))?;
+    tls.sock.set_read_timeout(Some(READ_TIMEOUT))?;
 
     let (outbound_tx, outbound_rx) = mpsc::channel::<CastMessage>();
     let (incoming_tx, incoming_rx) = mpsc::channel::<CastMessage>();
@@ -158,7 +173,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
 }
 
 fn dispatcher(
-    mut tls: native_tls::TlsStream<TcpStream>,
+    mut tls: StreamOwned<ClientConnection, TcpStream>,
     outbound: Receiver<CastMessage>,
     incoming: Sender<CastMessage>,
     stop: Arc<AtomicBool>,
@@ -180,6 +195,11 @@ fn dispatcher(
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            // rustls surfaces peer TCP drop without close_notify as UnexpectedEof; Chromecast never sends close_notify.
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                log::debug!("Cast socket closed by peer");
+                break;
+            }
             Err(e) => {
                 log::warn!("Cast socket read error: {e}");
                 break;
@@ -279,7 +299,7 @@ fn take_frame(acc: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
     Ok(Some(acc.drain(..len).collect()))
 }
 
-fn write_message(tls: &mut native_tls::TlsStream<TcpStream>, msg: &CastMessage) -> std::io::Result<()> {
+fn write_message(tls: &mut StreamOwned<ClientConnection, TcpStream>, msg: &CastMessage) -> std::io::Result<()> {
     let body = encode_cast_message(msg);
     let len = (body.len() as u32).to_be_bytes();
     tls.write_all(&len)?;
@@ -397,6 +417,44 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
     }
 
     Ok(CastMessage { source, destination, namespace, payload })
+}
+
+#[derive(Debug)]
+struct NoVerify(Arc<CryptoProvider>);
+
+impl ServerCertVerifier for NoVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 #[cfg(test)]

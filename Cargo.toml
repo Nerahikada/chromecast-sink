@@ -27,7 +27,8 @@ rand = "0.9"
 hex = "0.4"
 
 # Cast v2 channel (TLS + length-prefixed CastMessage)
-native-tls = "0.2"
+# rustls + ring. Pin >= 0.23.18 for GHSA-6g7w-8wpp-frhj (complete_io CPU-spin).
+rustls = { version = "0.23.18", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 # JSON for OFFER/ANSWER (serde is pulled in transitively; we don't derive)
 serde_json = "1"
