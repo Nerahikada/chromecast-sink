@@ -60,9 +60,7 @@ impl VirtualSink {
                  (wireplumber) running?",
                 READY_TIMEOUT.as_secs(),
             ),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("pipewire thread died before sink was ready")
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => bail!("pipewire thread died before sink was ready"),
         }
 
         log::info!("Virtual sink ready: {}", sink.sink_name);

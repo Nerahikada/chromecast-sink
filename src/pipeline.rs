@@ -46,17 +46,10 @@ pub fn run_with_device(device: Device) -> Result<()> {
     channel.connect_transport(&session.transport_id)?;
 
     let offer = StreamOffer::default();
-    println!(
-        "Negotiating stream (Opus {}kbps, target delay {}ms)...",
-        OPUS_BITRATE / 1000,
-        TARGET_DELAY_MS,
-    );
+    println!("Negotiating stream (Opus {}kbps, target delay {}ms)...", OPUS_BITRATE / 1000, TARGET_DELAY_MS);
     let answer = mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
     if !answer.send_indexes.contains(&0) {
-        bail!(
-            "Chromecast did not accept the audio stream (sendIndexes={:?})",
-            answer.send_indexes
-        );
+        bail!("Chromecast did not accept the audio stream (sendIndexes={:?})", answer.send_indexes);
     }
     log::info!("Stream negotiated: UDP port {}", answer.udp_port);
 
@@ -143,6 +136,5 @@ fn pick_device(mut devices: Vec<Device>) -> Result<Device> {
 /// `ctrlc::set_handler` is only callable once per process.
 fn install_signal_handler(stop: &Arc<AtomicBool>) -> Result<()> {
     let flag = Arc::clone(stop);
-    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
-        .context("install SIGINT/SIGTERM handler")
+    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed)).context("install SIGINT/SIGTERM handler")
 }

@@ -109,24 +109,17 @@ impl CastRtpSender {
         self.socket.send_to(&pkt, &self.dest)?;
 
         self.frame_id.store(fid.wrapping_add(1), Ordering::Relaxed);
-        self.octet_count
-            .fetch_add(opus_frame.len() as u64, Ordering::Relaxed);
+        self.octet_count.fetch_add(opus_frame.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
     #[cfg(test)]
     pub fn stats(&self) -> (u32, u64) {
-        (
-            self.frame_id.load(Ordering::Relaxed),
-            self.octet_count.load(Ordering::Relaxed),
-        )
+        (self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed))
     }
 
     pub fn stats_handle(&self) -> StatsHandle {
-        StatsHandle {
-            frame_id: Arc::clone(&self.frame_id),
-            octet_count: Arc::clone(&self.octet_count),
-        }
+        StatsHandle { frame_id: Arc::clone(&self.frame_id), octet_count: Arc::clone(&self.octet_count) }
     }
 
     /// Spawn the 500 ms RTCP SR thread.
@@ -191,10 +184,7 @@ pub struct StatsHandle {
 
 impl StatsHandle {
     pub fn snapshot(&self) -> (u32, u64) {
-        (
-            self.frame_id.load(Ordering::Relaxed),
-            self.octet_count.load(Ordering::Relaxed),
-        )
+        (self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed))
     }
 }
 
@@ -245,10 +235,7 @@ mod tests {
         assert_eq!(pkt[0], 0x80);
         assert_eq!(pkt[1], 0xFF);
         assert_eq!(u16::from_be_bytes([pkt[2], pkt[3]]), 5);
-        assert_eq!(
-            u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]),
-            5 * OPUS_SAMPLES_PER_FRAME
-        );
+        assert_eq!(u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]), 5 * OPUS_SAMPLES_PER_FRAME);
         assert_eq!(u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]), 0xDEAD_BEEF);
         assert_eq!(pkt[12], 0xC0);
         assert_eq!(pkt[13], 5);
@@ -340,10 +327,7 @@ mod tests {
 
     #[test]
     fn rtcp_sr_matches_reference_vector() {
-        let sr = build_rtcp_sr_at(
-            0xDEAD_BEEF, 12345, 987_654,
-            Duration::new(1_234_567_890, 500_000_000),
-        );
+        let sr = build_rtcp_sr_at(0xDEAD_BEEF, 12345, 987_654, Duration::new(1_234_567_890, 500_000_000));
         assert_eq!(
             hex::encode(sr),
             "80c80006deadbeefcd40815280000000005a6ae000003039000f1206"

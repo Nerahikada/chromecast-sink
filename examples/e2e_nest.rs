@@ -151,9 +151,6 @@ fn main() -> Result<()> {
     let _ = cap_thread.join();
 
     let ok = silence < 20.0 && (100.0..200.0).contains(&tone_bpf);
-    println!(
-        "\nRESULT: silence={silence:.1} B/f, tone={tone_bpf:.1} B/f, after={after:.1} B/f -> {}",
-        if ok { "PASS" } else { "CHECK MANUALLY" }
-    );
+    println!("\nRESULT: silence={silence:.1} B/f, tone={tone_bpf:.1} B/f, after={after:.1} B/f -> {}", if ok { "PASS" } else { "CHECK MANUALLY" });
     Ok(())
 }

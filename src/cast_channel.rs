@@ -37,11 +37,7 @@ pub fn local_sender_id() -> &'static str {
 /// Matches Chromium `CreateVirtualConnectionRequest` (`cast_message_util.cc`).
 /// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `platform=6` (Linux), `connectionType=1` (LAN).
 fn build_connect_payload() -> Value {
-    const USER_AGENT: &str = concat!(
-        "chromecast-sink/",
-        env!("CARGO_PKG_VERSION"),
-        " (Linux; Rust)"
-    );
+    const USER_AGENT: &str = concat!("chromecast-sink/", env!("CARGO_PKG_VERSION"), " (Linux; Rust)");
     json!({
         "type": "CONNECT",
         "userAgent": USER_AGENT,
@@ -104,11 +100,7 @@ impl CastChannel {
     /// Close a virtual connection.
     /// `reasonCode` signals an intentional peer close rather than an abrupt drop (Chromium `CreateVirtualConnectionClose`).
     pub fn close_transport(&self, destination: &str) -> Result<()> {
-        self.send_json(
-            destination,
-            NS_CONNECTION,
-            &json!({"type": "CLOSE", "reasonCode": CLOSE_REASON_CLOSED_BY_PEER}),
-        )
+        self.send_json(destination, NS_CONNECTION, &json!({"type": "CLOSE", "reasonCode": CLOSE_REASON_CLOSED_BY_PEER}))
     }
 }
 
@@ -125,8 +117,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     // ring provider is process-global; Err on subsequent calls is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let mut tcp = TcpStream::connect((host, 8009))
-        .with_context(|| format!("TCP connect to {host}:8009"))?;
+    let mut tcp = TcpStream::connect((host, 8009)).with_context(|| format!("TCP connect to {host}:8009"))?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
 
@@ -137,9 +128,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
         .with_no_client_auth();
-    let name = ServerName::try_from(host)
-        .map(|n| n.to_owned())
-        .map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
+    let name = ServerName::try_from(host).map(|n| n.to_owned()).map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
     let mut conn = ClientConnection::new(Arc::new(cfg), name).context("TLS client init")?;
     conn.complete_io(&mut tcp).context("TLS handshake")?;
     let mut tls = StreamOwned::new(conn, tcp);
@@ -166,10 +155,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
         .spawn(move || dispatcher(tls, outbound_rx, incoming_tx, stop2))
         .expect("spawn dispatcher");
 
-    Ok((
-        CastChannel { outbound: outbound_tx, stop, thread: Some(thread) },
-        incoming_rx,
-    ))
+    Ok((CastChannel { outbound: outbound_tx, stop, thread: Some(thread) }, incoming_rx))
 }
 
 fn dispatcher(
@@ -193,8 +179,7 @@ fn dispatcher(
                 acc.extend(&buf[..n]);
                 last_rx = Instant::now();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                   || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
             // rustls surfaces peer TCP drop without close_notify as UnexpectedEof; Chromecast never sends close_notify.
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 log::debug!("Cast socket closed by peer");

@@ -65,8 +65,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     continue;
                 };
                 if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
-                    let matched_wanted = wanted_name
-                        .is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
+                    let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
                     devices.insert(dev.friendly_name.clone(), dev);
                     if matched_wanted {
                         break;
