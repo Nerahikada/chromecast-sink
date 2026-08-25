@@ -205,10 +205,11 @@ fn parse_answer(v: &Value) -> Result<StreamAnswer> {
         bail!("OFFER rejected: {v}");
     }
     let ans = v.get("answer").ok_or_else(|| anyhow!("no `answer` field"))?;
-    let udp_port = ans
-        .get("udpPort")
-        .and_then(|p| p.as_u64())
-        .ok_or_else(|| anyhow!("no udpPort"))? as u16;
+    let udp_port_raw = ans.get("udpPort").and_then(|p| p.as_u64()).ok_or_else(|| anyhow!("no udpPort"))?;
+    let udp_port = match udp_port_raw {
+        1..=65535 => udp_port_raw as u16,
+        n => bail!("udpPort {n} out of range (expected 1..=65535)"),
+    };
     let send_indexes = ans
         .get("sendIndexes")
         .and_then(|s| s.as_array())
@@ -327,5 +328,46 @@ mod tests {
             "answer": {"sendIndexes": [0]},
         }))
         .is_err());
+    }
+
+    #[test]
+    fn parse_answer_rejects_port_above_u16() {
+        let v = serde_json::json!({
+            "result": "ok",
+            "answer": {"udpPort": 70000, "sendIndexes": [0], "ssrcs": [1]},
+        });
+        let err = match parse_answer(&v) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected error for udpPort 70000"),
+        };
+        assert!(err.contains("70000"), "error should name the offending value: {err}");
+        assert!(err.contains("udpPort"), "error should mention the field: {err}");
+    }
+
+    #[test]
+    fn parse_answer_rejects_port_zero() {
+        let v = serde_json::json!({
+            "result": "ok",
+            "answer": {"udpPort": 0, "sendIndexes": [0], "ssrcs": [1]},
+        });
+        assert!(parse_answer(&v).is_err());
+    }
+
+    #[test]
+    fn parse_answer_accepts_max_port() {
+        let v = serde_json::json!({
+            "result": "ok",
+            "answer": {"udpPort": 65535, "sendIndexes": [0], "ssrcs": [1]},
+        });
+        assert_eq!(parse_answer(&v).unwrap().udp_port, 65535);
+    }
+
+    #[test]
+    fn parse_answer_accepts_typical_port() {
+        let v = serde_json::json!({
+            "result": "ok",
+            "answer": {"udpPort": 5004, "sendIndexes": [0], "ssrcs": [1]},
+        });
+        assert_eq!(parse_answer(&v).unwrap().udp_port, 5004);
     }
 }
