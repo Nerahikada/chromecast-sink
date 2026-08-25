@@ -1,0 +1,4 @@
+# Shield against editor format-on-save re-wrapping intentionally-unwrapped code; CI does not enforce fmt.
+# `use_small_heuristics = "Max"` is load-bearing: without it, fn_call_width / chain_width etc. still wrap at 60 regardless of max_width.
+max_width = 240
+use_small_heuristics = "Max"

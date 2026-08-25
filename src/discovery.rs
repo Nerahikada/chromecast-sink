@@ -1,0 +1,142 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+use anyhow::{bail, Context, Result};
+use mdns_sd::{ServiceDaemon, ServiceEvent};
+
+const SERVICE: &str = "_googlecast._tcp.local.";
+
+/// `ca` TXT bitmask: bit 0 = VIDEO_OUT.
+/// Verified on a real Nest Mini (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
+const CA_VIDEO_OUT: u32 = 0x01;
+
+/// Exit an untargeted browse early if no new device resolves within this window.
+/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s (service_daemon.rs:2578-2620); 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
+const QUIET: Duration = Duration::from_millis(2500);
+
+#[derive(Debug, Clone)]
+pub struct Device {
+    pub friendly_name: String,
+    pub model: Option<String>,
+    pub host: String,
+    pub is_audio_only: bool,
+}
+
+impl Device {
+    fn from_txt(host: String, txt: &HashMap<String, String>) -> Option<Self> {
+        let friendly = txt.get("fn")?.to_string();
+        let model = txt.get("md").cloned();
+        let ca = txt.get("ca").and_then(|v| v.parse::<u32>().ok());
+        let is_audio_only = is_audio_only_device(ca, model.as_deref());
+        Some(Self { friendly_name: friendly, model, host, is_audio_only })
+    }
+}
+
+/// `ca` bitmask is authoritative; model-name matching is a fallback for responders that omit `ca`.
+fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
+    match ca {
+        Some(bits) => bits & CA_VIDEO_OUT == 0,
+        None => model.is_some_and(is_audio_only_model),
+    }
+}
+
+fn is_audio_only_model(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.contains("google home")
+        || m.contains("nest mini")
+        || m.contains("nest audio")
+        || m.contains("home mini")
+        || m.contains("home max")
+}
+
+/// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not); otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
+pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
+    log::debug!("mDNS: browsing {SERVICE} for up to {timeout:?}");
+    let daemon = ServiceDaemon::new().context("start mdns daemon")?;
+    let receiver = daemon.browse(SERVICE).context("start browse")?;
+
+    let deadline = Instant::now() + timeout;
+    let mut devices: HashMap<String, Device> = HashMap::new();
+    let mut last_new_at = Instant::now();
+
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(remaining.min(Duration::from_millis(200))) {
+            Ok(ServiceEvent::ServiceResolved(info)) => {
+                let mut txt = HashMap::new();
+                for prop in info.get_properties().iter() {
+                    txt.insert(prop.key().to_string(), prop.val_str().to_string());
+                }
+                let ip = info.get_addresses_v4().iter().next().copied();
+                log::debug!(
+                    "mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}",
+                    info.get_fullname(), info.get_hostname(), info.get_addresses_v4(),
+                    txt.get("fn"), txt.get("md"), txt.get("ca"),
+                );
+                let Some(ip) = ip else { continue };
+                if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
+                    let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
+                    let is_new = devices.insert(dev.friendly_name.clone(), dev).is_none();
+                    if is_new {
+                        last_new_at = Instant::now();
+                    }
+                    if matched_wanted {
+                        break;
+                    }
+                }
+            }
+            Ok(ServiceEvent::ServiceFound(_, name)) => log::debug!("mDNS: ServiceFound {name} (awaiting resolve)"),
+            Ok(ServiceEvent::ServiceRemoved(_, name)) => log::debug!("mDNS: ServiceRemoved {name}"),
+            Ok(ServiceEvent::SearchStarted(s)) => log::debug!("mDNS: SearchStarted {s}"),
+            Ok(ServiceEvent::SearchStopped(s)) => log::debug!("mDNS: SearchStopped {s}"),
+            Err(_) => {
+                // A dead daemon returns instantly forever; falling through spins.
+                if receiver.is_disconnected() {
+                    log::warn!("mDNS daemon stopped; reporting what resolved so far");
+                    break;
+                }
+            }
+        }
+        // Only shortcut the untargeted list case; a wanted_name miss must wait the full timeout so a slow-responding target isn't declared missing prematurely.
+        if wanted_name.is_none() && last_new_at.elapsed() >= QUIET {
+            break;
+        }
+    }
+
+    log::debug!("mDNS: browse done, {} device(s) resolved", devices.len());
+    let _ = daemon.shutdown();
+
+    let mut out: Vec<Device> = devices.into_values().collect();
+    out.sort_by(|a, b| a.friendly_name.cmp(&b.friendly_name));
+
+    if let Some(name) = wanted_name {
+        out.retain(|d| d.friendly_name.eq_ignore_ascii_case(name));
+        if out.is_empty() {
+            bail!("Device '{name}' not found within {timeout:?}");
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ca_bitmask_decides_when_present() {
+        assert!(is_audio_only_device(Some(198_660), None)); // real Nest Mini
+        assert!(is_audio_only_device(Some(2052), Some("Chromecast Audio")));
+        assert!(!is_audio_only_device(Some(4101), None)); // video Chromecast
+        // ca wins over a misleading model name
+        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini")));
+    }
+
+    #[test]
+    fn model_fallback_without_ca() {
+        assert!(is_audio_only_device(None, Some("Google Nest Mini")));
+        assert!(is_audio_only_device(None, Some("Google Home Max")));
+        assert!(!is_audio_only_device(None, Some("Chromecast Ultra")));
+        assert!(!is_audio_only_device(None, None));
+    }
+}

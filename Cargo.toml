@@ -1,0 +1,52 @@
+[package]
+name = "chromecast-sink"
+version = "0.0.1"
+edition = "2021"
+# Floor set by clap 4.6's edition-2024 deps; verified with `cargo +1.85.0 check`.
+rust-version = "1.85"
+description = "Use Google Chromecast / Nest as a Linux speaker output via PipeWire virtual sink"
+license = "MIT"
+repository = "https://github.com/Nerahikada/chromecast-sink"
+keywords = ["chromecast", "cast", "pipewire", "audio", "opus"]
+categories = ["multimedia::audio", "command-line-utilities"]
+
+[[bin]]
+name = "chromecast-sink"
+path = "src/main.rs"
+
+[dependencies]
+# CLI + logging
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+
+# Errors
+anyhow = "1"
+
+# Cast Streaming crypto and RTP
+aes = "0.8"
+ctr = "0.9"
+rand = "0.9"
+hex = "0.4"
+
+# Cast v2 channel (TLS + length-prefixed CastMessage)
+# rustls + ring. Pin >= 0.23.18 for GHSA-6g7w-8wpp-frhj (complete_io CPU-spin).
+rustls = { version = "0.23.18", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+# JSON for OFFER/ANSWER (serde is pulled in transitively; we don't derive)
+serde_json = "1"
+
+# mDNS discovery
+mdns-sd = "0.13"
+
+# libopus encoder
+opus = "0.3"
+
+# pipewire-rs (virtual sink + capture in one stream)
+pipewire = "0.8"
+
+# Signal handling in pipeline (SIGINT + SIGTERM)
+ctrlc = { version = "3", features = ["termination"] }
+
+[dev-dependencies]
+hex-literal = "0.4"
