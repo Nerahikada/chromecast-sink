@@ -1,6 +1,5 @@
 //! Cast v2 channel: TLS to port 8009, length-prefixed CastMessage protobuf.
-//! One dispatcher thread owns the TLS stream; PINGs are auto-PONGed inline,
-//! everything else is forwarded to the caller.
+//! One dispatcher thread owns the TLS stream; PINGs are auto-PONGed inline, everything else is forwarded to the caller.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -26,16 +25,14 @@ pub const PLATFORM_RECEIVER_ID: &str = "receiver-0";
 const CLOSE_REASON_CLOSED_BY_PEER: u32 = 5;
 
 /// Random per-process sender id (Chromium `CastMessageHandler` convention).
-/// A fresh identity per run keeps a leftover virtual connection on the
-/// receiver from a prior run from colliding with ours.
+/// A fresh identity per run keeps a leftover virtual connection on the receiver from a prior run from colliding with ours.
 pub fn local_sender_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
     ID.get_or_init(|| format!("sender-{}", rand::rng().random_range(0..1_000_000)))
 }
 
 /// Matches Chromium `CreateVirtualConnectionRequest` (`cast_message_util.cc`).
-/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`,
-/// `platform=6` (Linux), `connectionType=1` (LAN).
+/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `platform=6` (Linux), `connectionType=1` (LAN).
 fn build_connect_payload() -> Value {
     const USER_AGENT: &str = concat!(
         "chromecast-sink/",
@@ -60,8 +57,7 @@ fn build_connect_payload() -> Value {
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
-/// Handshake needs headroom for multiple TLS round-trips; a 50ms poll here
-/// would spuriously fail on a slow network.
+/// Handshake needs headroom for multiple TLS round-trips; a 50ms poll here would spuriously fail on a slow network.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// openscreen `kMaxBodySize` (`cast/common/channel/message_framer.cc`).
 const MAX_BODY_SIZE: usize = 65536;
@@ -102,8 +98,8 @@ impl CastChannel {
         self.send_json(destination, NS_CONNECTION, &build_connect_payload())
     }
 
-    /// Close a virtual connection. `reasonCode` signals an intentional peer
-    /// close rather than an abrupt drop (Chromium `CreateVirtualConnectionClose`).
+    /// Close a virtual connection.
+    /// `reasonCode` signals an intentional peer close rather than an abrupt drop (Chromium `CreateVirtualConnectionClose`).
     pub fn close_transport(&self, destination: &str) -> Result<()> {
         self.send_json(
             destination,
@@ -132,8 +128,7 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut tls = connector.connect(host, tcp).context("TLS handshake")?;
-    // Post-handshake: short poll so the dispatcher can wake to check `stop`
-    // and drain outbound.
+    // Post-handshake: short poll so the dispatcher can wake to check `stop` and drain outbound.
     tls.get_ref().set_read_timeout(Some(READ_TIMEOUT))?;
 
     let (outbound_tx, outbound_rx) = mpsc::channel::<CastMessage>();
@@ -221,8 +216,7 @@ fn dispatcher(
             }
         }
 
-        // Any write error kills the dispatcher — a partial write corrupts the
-        // length-prefix framing for everything after it.
+        // Any write error kills the dispatcher — a partial write corrupts the length-prefix framing for everything after it.
         loop {
             match outbound.try_recv() {
                 Ok(msg) => {
@@ -251,17 +245,14 @@ fn dispatcher(
             last_ping = Instant::now();
         }
 
-        // A dead receiver leaves TCP silently open for minutes; without this the
-        // PINGs above go unanswered forever and nothing ever reports the loss.
+        // A dead receiver leaves TCP silently open for minutes; without this the PINGs above go unanswered forever and nothing ever reports the loss.
         if last_rx.elapsed() >= LIVENESS_TIMEOUT {
             log::warn!("No data from Chromecast in {LIVENESS_TIMEOUT:?}; channel is dead");
             break;
         }
     }
 
-    // Flush any messages enqueued between the last loop tick and the `stop`
-    // flip in CastChannel::drop, so a graceful shutdown handshake still makes
-    // it out before TLS close_notify.
+    // Flush any messages enqueued between the last loop tick and the `stop` flip in CastChannel::drop, so a graceful shutdown handshake still makes it out before TLS close_notify.
     while let Ok(msg) = outbound.try_recv() {
         if let Err(e) = write_message(&mut tls, &msg) {
             log::debug!("Cast socket write error during shutdown drain: {e}");
@@ -332,8 +323,7 @@ fn write_varint_field(buf: &mut Vec<u8>, tag: u32, v: u64) {
 }
 
 /// Returns true iff `payload` parses as a JSON object with `{"type": expected}`.
-/// Used to gate hot-path behavior (heartbeat auto-PONG, session-close detection)
-/// on a real JSON parse rather than a fragile substring match.
+/// Used to gate hot-path behavior (heartbeat auto-PONG, session-close detection) on a real JSON parse rather than a fragile substring match.
 pub fn payload_type_is(payload: &str, expected: &str) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(payload) else { return false };
     v.get("type").and_then(|t| t.as_str()) == Some(expected)
@@ -387,8 +377,7 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
             }
             2 => {
                 let len = read_varint(data, &mut pos)?;
-                // Peer-supplied and free to claim u64::MAX; compared against the
-                // bytes left rather than `pos + len`, which would wrap.
+                // Peer-supplied and free to claim u64::MAX; compared against the bytes left rather than `pos + len`, which would wrap.
                 if len > (data.len() - pos) as u64 {
                     bail!("length-delimited field overruns buffer");
                 }

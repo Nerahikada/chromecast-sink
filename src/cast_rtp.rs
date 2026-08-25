@@ -1,8 +1,7 @@
-//! Cast RTP: custom "cast" profile (NOT SRTP). AES-128-CTR per frame,
-//! 12 B RTP header + 7 B Cast extension, RTCP SR every 500 ms.
+//! Cast RTP: custom "cast" profile (NOT SRTP).
+//! AES-128-CTR per frame, 12 B RTP header + 7 B Cast extension, RTCP SR every 500 ms.
 //!
-//! SRs are *required*: without them the receiver kills the mirroring app
-//! within seconds (verified on Nest Mini).
+//! SRs are *required*: without them the receiver kills the mirroring app within seconds (verified on Nest Mini).
 
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -31,9 +30,7 @@ pub struct Config {
     pub aes_iv_mask: [u8; 16],
 }
 
-/// One Opus frame is always one packet (~161 B), so `frame_id` doubles as the
-/// RTP sequence number and RTCP packet count, and the RTP timestamp is
-/// `frame_id * OPUS_SAMPLES_PER_FRAME`.
+/// One Opus frame is always one packet (~161 B), so `frame_id` doubles as the RTP sequence number and RTCP packet count, and the RTP timestamp is `frame_id * OPUS_SAMPLES_PER_FRAME`.
 pub struct CastRtpSender {
     config: Config,
     socket: Arc<UdpSocket>,
@@ -77,10 +74,8 @@ impl CastRtpSender {
         buf
     }
 
-    /// 12 B RTP header + 7 B Cast extension. Openscreen `RtpPacketizer` sets
-    /// `kRtpHasReferenceFrameIdBitMask=0x40` unconditionally, so byte 18
-    /// (`referenced_frame_id`) is always present; for independently-decodable
-    /// frames it equals `frame_id` per `encoded_frame.h`.
+    /// 12 B RTP header + 7 B Cast extension.
+    /// Openscreen `RtpPacketizer` sets `kRtpHasReferenceFrameIdBitMask=0x40` unconditionally, so byte 18 (`referenced_frame_id`) is always present; for independently-decodable frames it equals `frame_id` per `encoded_frame.h`.
     fn build_packet(&self, encrypted: &[u8], frame_id: u32) -> Vec<u8> {
         const CAST_EXT_HEADER_LEN: usize = 7;
         let mut pkt = Vec::with_capacity(12 + CAST_EXT_HEADER_LEN + encrypted.len());
@@ -134,8 +129,8 @@ impl CastRtpSender {
         }
     }
 
-    /// Spawn the 500 ms RTCP SR thread. Required — without SRs the receiver
-    /// kills the mirroring app within seconds.
+    /// Spawn the 500 ms RTCP SR thread.
+    /// Required — without SRs the receiver kills the mirroring app within seconds.
     pub fn start(&mut self) {
         let (tx, rx) = mpsc::channel::<()>();
         let socket = Arc::clone(&self.socket);

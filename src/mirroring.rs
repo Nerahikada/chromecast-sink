@@ -1,5 +1,4 @@
-//! Mirroring control: LAUNCH the app, then OFFER/ANSWER on the
-//! `webrtc` namespace (Cast-proprietary JSON, not SDP/WebRTC).
+//! Mirroring control: LAUNCH the app, then OFFER/ANSWER on the `webrtc` namespace (Cast-proprietary JSON, not SDP/WebRTC).
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -21,8 +20,7 @@ pub const OPUS_SAMPLE_RATE: u32 = 48_000;
 pub const OPUS_CHANNELS: u32 = 2;
 pub const OPUS_BITRATE: i32 = 128_000;
 pub const RTP_PAYLOAD_TYPE: u8 = 127;
-/// `0` means 0ms, not "device default" — the default (400ms) only applies
-/// when the field is absent.
+/// `0` means 0ms, not "device default" — the default (400ms) only applies when the field is absent.
 pub const TARGET_DELAY_MS: u32 = 0;
 
 #[derive(Debug, Clone, Copy)]
@@ -66,16 +64,14 @@ pub struct StreamAnswer {
     pub send_indexes: Vec<u64>,
 }
 
-/// Owns the receiver-side app: dropping it tears the session down, so early
-/// returns between LAUNCH and shutdown still unload it.
+/// Owns the receiver-side app: dropping it tears the session down, so early returns between LAUNCH and shutdown still unload it.
 pub struct MirroringSession<'a> {
     channel: &'a CastChannel,
     pub transport_id: String,
     pub session_id: String,
 }
 
-/// STOP unloads the app; the two CLOSEs are ours — Chromium's `TerminateSession`
-/// sends STOP alone and lets both VCs die with the socket, which it keeps open.
+/// STOP unloads the app; the two CLOSEs are ours — Chromium's `TerminateSession` sends STOP alone and lets both VCs die with the socket, which it keeps open.
 impl Drop for MirroringSession<'_> {
     fn drop(&mut self) {
         if let Err(e) = send_stop(self.channel, &self.session_id) {
@@ -109,9 +105,7 @@ pub fn launch_mirroring<'a>(
     )?;
 
     wait_for_json_message(incoming, NS_RECEIVER, Instant::now() + timeout, |v| {
-        // Filter by requestId, not app_id: a RECEIVER_STATUS broadcast may
-        // describe a leftover session from a crashed prior run (same app_id,
-        // dead transport/sessionId).
+        // Filter by requestId, not app_id: a RECEIVER_STATUS broadcast may describe a leftover session from a crashed prior run (same app_id, dead transport/sessionId).
         if v.get("requestId").and_then(|r| r.as_u64()) != Some(request_id) {
             return None;
         }
@@ -167,8 +161,7 @@ pub fn send_offer(
     timeout: Duration,
 ) -> Result<StreamAnswer> {
     let seq_num = new_request_id() as i64;
-    // openscreen `AudioStream::ToJson`: sample rate rides in `timeBase`,
-    // not a separate `sampleRate` key.
+    // openscreen `AudioStream::ToJson`: sample rate rides in `timeBase`, not a separate `sampleRate` key.
     let payload = json!({
         "type": "OFFER",
         "seqNum": seq_num,
@@ -225,8 +218,8 @@ fn parse_answer(v: &Value) -> Result<StreamAnswer> {
     Ok(StreamAnswer { udp_port, send_indexes })
 }
 
-/// Predicate returns `None` to keep waiting, `Some(Ok(_))` for success,
-/// `Some(Err(_))` to bail. Non-JSON payloads on `namespace` are dropped.
+/// Predicate returns `None` to keep waiting, `Some(Ok(_))` for success, `Some(Err(_))` to bail.
+/// Non-JSON payloads on `namespace` are dropped.
 fn wait_for_json_message<T>(
     rx: &Receiver<CastMessage>,
     namespace: &str,

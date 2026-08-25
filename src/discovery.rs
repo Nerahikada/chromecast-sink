@@ -6,8 +6,8 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 const SERVICE: &str = "_googlecast._tcp.local.";
 
-/// `ca` TXT bitmask: bit 0 = VIDEO_OUT. Verified on a real Nest Mini
-/// (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
+/// `ca` TXT bitmask: bit 0 = VIDEO_OUT.
+/// Verified on a real Nest Mini (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
 const CA_VIDEO_OUT: u32 = 0x01;
 
 #[derive(Debug, Clone)]
@@ -28,8 +28,7 @@ impl Device {
     }
 }
 
-/// `ca` bitmask is authoritative; model-name matching is a fallback for
-/// responders that omit `ca`.
+/// `ca` bitmask is authoritative; model-name matching is a fallback for responders that omit `ca`.
 fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
     match ca {
         Some(bits) => bits & CA_VIDEO_OUT == 0,
@@ -46,8 +45,7 @@ fn is_audio_only_model(model: &str) -> bool {
         || m.contains("home max")
 }
 
-/// If `wanted_name` is given, returns as soon as it's found; otherwise waits
-/// the full timeout.
+/// If `wanted_name` is given, returns as soon as it's found; otherwise waits the full timeout.
 pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
     let daemon = ServiceDaemon::new().context("start mdns daemon")?;
     let receiver = daemon.browse(SERVICE).context("start browse")?;

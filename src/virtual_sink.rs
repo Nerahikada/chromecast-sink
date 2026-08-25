@@ -44,8 +44,7 @@ impl VirtualSink {
             .spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx))
             .expect("spawn pw-sink thread");
 
-        // `channel::Sender` has no `Drop`, so a return before this leaves an
-        // orphan sink registered in PipeWire.
+        // `channel::Sender` has no `Drop`, so a return before this leaves an orphan sink registered in PipeWire.
         let sink = Self {
             sink_name,
             consumer: Some(consumer),
@@ -110,8 +109,7 @@ fn enum_format_pod() -> Result<Vec<u8>> {
     info.set_format(spa::param::audio::AudioFormat::S16LE);
     info.set_rate(SAMPLE_RATE);
     info.set_channels(CHANNELS as u32);
-    // The `audio.position` property is a no-op on a stream-backed node; the
-    // channel map only takes effect here, in the format.
+    // The `audio.position` property is a no-op on a stream-backed node; the channel map only takes effect here, in the format.
     let mut position = [0u32; 64];
     position[0] = spa::sys::SPA_AUDIO_CHANNEL_FL;
     position[1] = spa::sys::SPA_AUDIO_CHANNEL_FR;
@@ -141,8 +139,7 @@ fn run_pw_thread(
     pw::init();
     let closer = producer.closer();
 
-    // Without `node.always-process` the node stops being processed whenever no
-    // client is playing, which stalls the RTP stream to the receiver.
+    // Without `node.always-process` the node stops being processed whenever no client is playing, which stalls the RTP stream to the receiver.
     let props = properties! {
         "media.class" => "Audio/Sink",
         "node.name" => sink_name.as_str(),
@@ -179,8 +176,7 @@ fn run_pw_thread(
     let ready_tx_c = ready_tx.clone();
     let closer_state = closer.clone();
 
-    // Must be declared *below* `stream`: locals drop in reverse, and unlinking
-    // this hook after `pw_stream_destroy` would touch freed memory.
+    // Must be declared *below* `stream`: locals drop in reverse, and unlinking this hook after `pw_stream_destroy` would touch freed memory.
     let listener = stream
         .add_local_listener::<()>()
         .state_changed(move |_, _, old, new| {
@@ -279,8 +275,7 @@ fn run_pw_thread(
 
     mainloop.run();
 
-    // The loop can also exit on its own (`pw_loop_iterate` error); unblock the
-    // caller rather than leaving it on the readiness timeout.
+    // The loop can also exit on its own (`pw_loop_iterate` error); unblock the caller rather than leaving it on the readiness timeout.
     if !signalled.swap(true, Ordering::Relaxed) {
         let _ = ready_tx.send(Err(anyhow!("pipewire loop exited before the sink started")));
     }

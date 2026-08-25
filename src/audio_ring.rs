@@ -1,19 +1,16 @@
 use std::sync::atomic::{fence, AtomicBool, AtomicI16, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// The realtime producer laps the read index on overrun rather than blocking;
-/// slots are atomic only to make that a defined race rather than UB.
+/// The realtime producer laps the read index on overrun rather than blocking; slots are atomic only to make that a defined race rather than UB.
 ///
-/// The indices advance by a load/store pair, not an atomic RMW, so a second
-/// endpoint on either side would drive its index backwards — and every field
-/// being atomic, no sanitizer would see it. Hence the split endpoints.
+/// The indices advance by a load/store pair, not an atomic RMW, so a second endpoint on either side would drive its index backwards — and every field being atomic, no sanitizer would see it.
+/// Hence the split endpoints.
 struct AudioRing {
     buf: Box<[AtomicI16]>,
     capacity: usize,
     channels: usize,
     sample_mask: usize,
-    /// Published *before* the producer touches any slot; `write` alone would
-    /// hide a batch in flight over the region the consumer is copying.
+    /// Published *before* the producer touches any slot; `write` alone would hide a batch in flight over the region the consumer is copying.
     reserved: AtomicUsize,
     write: AtomicUsize,
     read: AtomicUsize,
@@ -97,8 +94,7 @@ impl AudioRing {
             *o = self.buf[base.wrapping_add(i) & self.sample_mask].load(Ordering::Relaxed);
         }
 
-        // Pins the copy above ahead of the check below; without it aarch64 may
-        // satisfy the slot loads after the `reserved` load.
+        // Pins the copy above ahead of the check below; without it aarch64 may satisfy the slot loads after the `reserved` load.
         fence(Ordering::Acquire);
         if self.reserved.load(Ordering::Relaxed).wrapping_sub(r) > self.capacity {
             return false;
@@ -132,8 +128,7 @@ impl RingProducer {
     }
 }
 
-/// Data-free, so the sink's give-up paths can hold one while the producer
-/// itself lives in the process callback.
+/// Data-free, so the sink's give-up paths can hold one while the producer itself lives in the process callback.
 #[derive(Clone)]
 pub struct RingCloser {
     ring: Arc<AudioRing>,

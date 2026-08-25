@@ -14,13 +14,11 @@ pub const CHANNELS: u8 = 2;
 const DRAIN_THRESHOLD_MS: usize = 30;
 const DRAIN_TARGET_MS: usize = 10;
 
-/// Headroom past the drain point, so a producer batch cannot land on the
-/// region being copied.
+/// Headroom past the drain point, so a producer batch cannot land on the region being copied.
 const MAX_EXPECTED_QUANTUM: usize = 2048;
 
-/// Send failures self-heal (a Wi-Fi blip returns `ENETUNREACH`, then the same
-/// socket works again). Past this point RTCP has been down just as long, so the
-/// receiver has dropped the app anyway.
+/// Send failures self-heal (a Wi-Fi blip returns `ENETUNREACH`, then the same socket works again).
+/// Past this point RTCP has been down just as long, so the receiver has dropped the app anyway.
 const OUTAGE_FATAL: Duration = Duration::from_secs(5);
 
 struct Outage {

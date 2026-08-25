@@ -92,8 +92,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     sender.stop();
     drop(session);
-    // drop(channel) must precede monitor.join(): it releases the incoming
-    // Sender the monitor is blocked on, otherwise the join deadlocks.
+    // drop(channel) must precede monitor.join(): it releases the incoming Sender the monitor is blocked on, otherwise the join deadlocks.
     drop(channel);
     let _ = monitor.join();
     drop(sink);
@@ -108,8 +107,8 @@ fn spawn_session_monitor(
     std::thread::Builder::new()
         .name("session-monitor".into())
         .spawn(move || {
-            // Default reason covers the recv-error path (dispatcher gone: our
-            // shutdown, or the TLS socket died). Overwritten if we see CLOSE.
+            // Default reason covers the recv-error path (dispatcher gone: our shutdown, or the TLS socket died).
+            // Overwritten if we see CLOSE.
             let mut reason = "Connection to Chromecast lost";
             while let Ok(msg) = incoming.recv() {
                 if msg.namespace == NS_CONNECTION
