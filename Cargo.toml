@@ -6,6 +6,9 @@ edition = "2021"
 rust-version = "1.85"
 description = "Use Google Chromecast / Nest as a Linux speaker output via PipeWire virtual sink"
 license = "MIT"
+repository = "https://github.com/Nerahikada/chromecast-sink"
+keywords = ["chromecast", "cast", "pipewire", "audio", "opus"]
+categories = ["multimedia::audio", "command-line-utilities"]
 
 [[bin]]
 name = "chromecast-sink"
