@@ -3,6 +3,7 @@
 //!   cargo run --example e2e_nest --release -- 192.168.238.100 --no-rtcp
 //!
 //! `--no-rtcp` disables Sender Reports to verify the receiver kills the
+//! mirroring app when SRs are absent.
 
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,8 +85,7 @@ fn main() -> Result<()> {
     make_tone_wav(tone)?;
 
     println!("Creating virtual sink...");
-    let sink = VirtualSink::new("Test Nest")?;
-    println!("  monitor: {}", sink.monitor_source);
+    let mut sink = VirtualSink::new("Test Nest")?;
     println!("  sink   : {}", sink.sink_name);
 
     println!("Connecting to {host}...");
@@ -115,9 +115,9 @@ fn main() -> Result<()> {
 
     let stop = Arc::new(AtomicBool::new(false));
     let cap_stop = Arc::clone(&stop);
-    let monitor = sink.monitor_source.clone();
+    let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
     let cap_thread = thread::spawn(move || {
-        if let Err(e) = capture::run(&monitor, &mut sender, cap_stop, OPUS_BITRATE) {
+        if let Err(e) = capture::run(&mut ring, &mut sender, cap_stop, OPUS_BITRATE) {
             eprintln!("capture error: {e:#}");
         }
         sender.stop();
@@ -126,14 +126,16 @@ fn main() -> Result<()> {
     thread::sleep(Duration::from_secs(2));
     let silence = snapshot(&stats, "silence");
 
-    println!("injecting tone via paplay...");
-    let mut pa = Command::new("paplay")
-        .arg(format!("--device={}", sink.sink_name))
+    println!("injecting tone via pw-cat...");
+    let mut player = Command::new("pw-cat")
+        .arg("--playback")
+        .arg("--target")
+        .arg(&sink.sink_name)
         .arg(tone)
         .spawn()?;
     thread::sleep(Duration::from_secs(1));
     let tone_bpf = snapshot(&stats, "tone");
-    let _ = pa.wait();
+    let _ = player.wait();
     let after = snapshot(&stats, "after");
 
     if no_rtcp {

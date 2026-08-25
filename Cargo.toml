@@ -35,14 +35,10 @@ serde_json = "1"
 # mDNS discovery
 mdns-sd = "0.13"
 
-# libpulse-simple for monitor capture (matches Python side; can revisit later)
-libpulse-simple-binding = "2"
-libpulse-binding = "2"
-
 # libopus encoder
 opus = "0.3"
 
-# pipewire-rs (native in-process node)
+# pipewire-rs (virtual sink + capture in one stream)
 pipewire = "0.8"
 
 # Signal handling in pipeline (SIGINT + SIGTERM)

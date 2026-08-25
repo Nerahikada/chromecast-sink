@@ -11,17 +11,17 @@ Creates a PipeWire virtual sink that appears in your system's sound settings. Se
 ### Runtime
 
 ```bash
-sudo apt install libpipewire-0.3-0t64 libpulse0 libopus0 libssl3t64
+sudo apt install libpipewire-0.3-0t64 libopus0 libssl3t64
 ```
 
-The PipeWire stack itself (`pipewire`, `pipewire-pulse`, `wireplumber`) is preinstalled on any modern Ubuntu desktop. On a headless machine, install those explicitly too.
+The PipeWire stack itself (`pipewire`, `wireplumber`) is preinstalled on any modern Ubuntu desktop. On a headless machine, install those explicitly too. The PulseAudio compatibility layer (`pipewire-pulse`) is not needed by this tool, though your desktop's sound settings may still use it.
 
 ### Build
 
 Rust 1.85+ and:
 
 ```bash
-sudo apt install libpipewire-0.3-dev libpulse-dev libopus-dev libssl-dev libclang-dev pkg-config
+sudo apt install libpipewire-0.3-dev libopus-dev libssl-dev libclang-dev pkg-config
 ```
 
 Each `-dev` package depends on its runtime counterpart above, so on a build-and-run machine this line alone covers both.
@@ -54,5 +54,4 @@ If you want HTTP-based streaming instead — broader device compatibility and a 
 
 ## Known Limitations
 
-- **GNOME recording indicator**: a microphone icon appears in the top bar while casting (cosmetic only, audio works correctly)
 - **No auto-reconnect**: if the Chromecast disconnects, the tool exits cleanly — restart to reconnect

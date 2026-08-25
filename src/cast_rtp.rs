@@ -110,6 +110,7 @@ impl CastRtpSender {
         let fid = self.frame_id.load(Ordering::Relaxed);
         let enc = self.encrypt(opus_frame, fid);
         let pkt = self.build_packet(&enc, fid);
+        // Never advance frame_id on failure: a 128+ gap desyncs the receiver's AES-CTR keystream.
         self.socket.send_to(&pkt, &self.dest)?;
 
         self.frame_id.store(fid.wrapping_add(1), Ordering::Relaxed);
@@ -260,6 +261,29 @@ mod tests {
         assert_eq!(u16::from_be_bytes([pkt[16], pkt[17]]), 0);
         assert_eq!(pkt[18], 5);
         assert_eq!(&pkt[19..], b"payload");
+    }
+
+    #[test]
+    fn failed_send_does_not_advance_frame_id() {
+        let mut c = cfg();
+        c.udp_port = 0; // EINVAL from the kernel; nothing leaves the host
+        let mut s = CastRtpSender::new(c).unwrap();
+
+        for _ in 0..3 {
+            assert!(s.send_frame(b"opus").is_err());
+            assert_eq!(s.stats(), (0, 0));
+        }
+
+        let rx = UdpSocket::bind("127.0.0.1:0").unwrap();
+        rx.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        s.dest = ("127.0.0.1".into(), rx.local_addr().unwrap().port());
+        s.send_frame(b"opus").unwrap();
+
+        let mut buf = [0u8; 64];
+        let n = rx.recv(&mut buf).unwrap();
+        assert_eq!(n, 19 + 4);
+        assert_eq!(buf[13], 0, "resumes at the frame_id the failed sends held");
+        assert_eq!(s.stats(), (1, 4));
     }
 
     #[test]

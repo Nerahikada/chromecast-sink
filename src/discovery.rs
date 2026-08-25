@@ -15,7 +15,6 @@ pub struct Device {
     pub friendly_name: String,
     pub model: Option<String>,
     pub host: String,
-    /// Speakers reject the video mirroring app outright — see the app-ID
     pub is_audio_only: bool,
 }
 
@@ -77,7 +76,13 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 }
             }
             Ok(_) => {}
-            Err(_) => {}
+            Err(_) => {
+                // A dead daemon returns instantly forever; falling through spins.
+                if receiver.is_disconnected() {
+                    log::warn!("mDNS daemon stopped; reporting what resolved so far");
+                    break;
+                }
+            }
         }
     }
 

@@ -63,6 +63,11 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 /// Handshake needs headroom for multiple TLS round-trips; a 50ms poll here
 /// would spuriously fail on a slow network.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// openscreen `kMaxBodySize` (`cast/common/channel/message_framer.cc`).
+const MAX_BODY_SIZE: usize = 65536;
+/// Chromium `OpenParams::liveness_timeout_in_seconds` (`cast_media_sink_service_impl.h`).
+/// Two HEARTBEAT_INTERVALs, so a single dropped PONG is not fatal.
+const LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct CastMessage {
@@ -166,14 +171,18 @@ fn dispatcher(
     let mut buf = vec![0u8; 8192];
     let mut acc: Vec<u8> = Vec::new();
     let mut last_ping = Instant::now();
+    let mut last_rx = Instant::now();
 
-    while !stop.load(Ordering::Relaxed) {
+    'session: while !stop.load(Ordering::Relaxed) {
         match tls.read(&mut buf) {
             Ok(0) => {
                 log::debug!("Cast socket closed by peer");
                 break;
             }
-            Ok(n) => acc.extend(&buf[..n]),
+            Ok(n) => {
+                acc.extend(&buf[..n]);
+                last_rx = Instant::now();
+            }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
@@ -182,13 +191,15 @@ fn dispatcher(
             }
         }
 
-        while acc.len() >= 4 {
-            let len = u32::from_be_bytes([acc[0], acc[1], acc[2], acc[3]]) as usize;
-            if acc.len() < 4 + len {
-                break;
-            }
-            let _ = acc.drain(..4);
-            let body: Vec<u8> = acc.drain(..len).collect();
+        loop {
+            let body = match take_frame(&mut acc) {
+                Ok(Some(body)) => body,
+                Ok(None) => break,
+                Err(e) => {
+                    log::warn!("Cast framing error: {e}");
+                    break 'session;
+                }
+            };
             match decode_cast_message(&body) {
                 Ok(msg) => {
                     if msg.namespace == NS_HEARTBEAT {
@@ -239,6 +250,13 @@ fn dispatcher(
             let _ = write_message(&mut tls, &ping);
             last_ping = Instant::now();
         }
+
+        // A dead receiver leaves TCP silently open for minutes; without this the
+        // PINGs above go unanswered forever and nothing ever reports the loss.
+        if last_rx.elapsed() >= LIVENESS_TIMEOUT {
+            log::warn!("No data from Chromecast in {LIVENESS_TIMEOUT:?}; channel is dead");
+            break;
+        }
     }
 
     // Flush any messages enqueued between the last loop tick and the `stop`
@@ -251,6 +269,23 @@ fn dispatcher(
         }
     }
     log::debug!("Cast dispatcher exiting");
+}
+
+/// `Ok(None)` means "need more bytes"; `Err` means the framing is unrecoverable.
+fn take_frame(acc: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
+    if acc.len() < 4 {
+        return Ok(None);
+    }
+    let len = u32::from_be_bytes([acc[0], acc[1], acc[2], acc[3]]) as usize;
+    // Checked before buffering the body, or a peer can grow `acc` without bound.
+    if len > MAX_BODY_SIZE {
+        bail!("frame declares {len} bytes, over the {MAX_BODY_SIZE}-byte maximum");
+    }
+    if acc.len() < 4 + len {
+        return Ok(None);
+    }
+    let _ = acc.drain(..4);
+    Ok(Some(acc.drain(..len).collect()))
 }
 
 fn write_message(tls: &mut native_tls::TlsStream<TcpStream>, msg: &CastMessage) -> std::io::Result<()> {
@@ -351,10 +386,13 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
                 let _ = read_varint(data, &mut pos)?; // discard varint fields we don't use
             }
             2 => {
-                let len = read_varint(data, &mut pos)? as usize;
-                if pos + len > data.len() {
+                let len = read_varint(data, &mut pos)?;
+                // Peer-supplied and free to claim u64::MAX; compared against the
+                // bytes left rather than `pos + len`, which would wrap.
+                if len > (data.len() - pos) as u64 {
                     bail!("length-delimited field overruns buffer");
                 }
+                let len = len as usize;
                 let slice = &data[pos..pos + len];
                 pos += len;
                 match tag {
@@ -376,8 +414,7 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
 mod tests {
     use super::*;
 
-    /// Byte-identical to the official protobuf encoder: expected hex was
-    /// generated with pychromecast's cast_channel_pb2 (protoc output).
+    /// Expected hex is protoc output for openscreen's `cast_channel.proto`.
     #[test]
     fn encoding_matches_official_protobuf() {
         let ping = CastMessage {
@@ -421,5 +458,87 @@ mod tests {
         assert_eq!(decoded.destination, m.destination);
         assert_eq!(decoded.namespace, m.namespace);
         assert_eq!(decoded.payload, m.payload);
+    }
+
+    fn sample() -> CastMessage {
+        CastMessage {
+            source: "sender-0".into(),
+            destination: "receiver-0".into(),
+            namespace: NS_HEARTBEAT.into(),
+            payload: r#"{"type":"PING"}"#.into(),
+        }
+    }
+
+    #[test]
+    fn decode_rejects_oversized_length_delimited_field() {
+        for len in [u64::MAX, u64::MAX - 1, 1 << 63, 1 << 62, u32::MAX as u64, 17] {
+            let mut data = vec![0x12]; // tag 2 (source_id), wire type 2
+            write_varint(&mut data, len);
+            data.extend_from_slice(b"AAAAAAAAAAAAAAAA");
+            assert!(decode_cast_message(&data).is_err(), "len={len}");
+        }
+    }
+
+    #[test]
+    fn decode_rejects_malformed_varints() {
+        assert!(decode_cast_message(&[0x80]).is_err()); // continuation with no successor
+        assert!(decode_cast_message(&[0xFF; 16]).is_err()); // varint past 10 bytes
+        assert!(decode_cast_message(&[0x08]).is_err()); // wire type 0, value missing
+        assert!(decode_cast_message(&[0x09, 0, 0, 0, 0, 0, 0, 0, 0]).is_err()); // wire type 1
+        assert!(decode_cast_message(&[0x0D, 0, 0, 0, 0]).is_err()); // wire type 5
+    }
+
+    #[test]
+    fn decode_never_panics_on_corrupt_input() {
+        let full = encode_cast_message(&sample());
+        for n in 0..full.len() {
+            let _ = decode_cast_message(&full[..n]);
+        }
+        for i in 0..full.len() {
+            for bit in 0..8 {
+                let mut m = full.clone();
+                m[i] ^= 1 << bit;
+                let _ = decode_cast_message(&m);
+            }
+        }
+    }
+
+    #[test]
+    fn take_frame_rejects_oversized_declared_length() {
+        for len in [u32::MAX, 300 * 1024 * 1024, MAX_BODY_SIZE as u32 + 1] {
+            let mut acc = len.to_be_bytes().to_vec();
+            assert!(take_frame(&mut acc).is_err(), "len={len}");
+            assert_eq!(acc.len(), 4);
+        }
+    }
+
+    #[test]
+    fn take_frame_accepts_max_body_size() {
+        let body = vec![0u8; MAX_BODY_SIZE];
+        let mut acc = (MAX_BODY_SIZE as u32).to_be_bytes().to_vec();
+        acc.extend_from_slice(&body);
+        assert_eq!(take_frame(&mut acc).unwrap(), Some(body));
+        assert!(acc.is_empty());
+    }
+
+    #[test]
+    fn take_frame_waits_for_complete_frames() {
+        let body = encode_cast_message(&sample());
+        let mut one = (body.len() as u32).to_be_bytes().to_vec();
+        one.extend_from_slice(&body);
+        let mut wire = one.clone();
+        wire.extend_from_slice(&one);
+
+        let mut acc = Vec::new();
+        let mut frames = 0;
+        for b in &wire {
+            acc.push(*b);
+            while let Some(f) = take_frame(&mut acc).unwrap() {
+                assert_eq!(f, body);
+                frames += 1;
+            }
+        }
+        assert_eq!(frames, 2);
+        assert!(acc.is_empty());
     }
 }

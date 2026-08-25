@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::capture;
-use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION, PLATFORM_RECEIVER_ID};
+use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION};
 use crate::cast_rtp::{self, CastRtpSender};
 use crate::discovery::{self, Device};
 use crate::mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
@@ -35,7 +35,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
     log::info!("Chromecast: {} ({:?})", device.host, device.model);
 
     println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
-    let sink = VirtualSink::new(&device.friendly_name)?;
+    let mut sink = VirtualSink::new(&device.friendly_name)?;
 
     println!("Connecting to Chromecast...");
     let (channel, incoming) = cast_channel::connect(&device.host)?;
@@ -83,29 +83,21 @@ pub fn run_with_device(device: Device) -> Result<()> {
         device.friendly_name, device.friendly_name,
     );
 
-    let capture_result = capture::run(
-        &sink.monitor_source,
-        &mut sender,
-        Arc::clone(&stop),
-        OPUS_BITRATE,
-    );
+    let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
+    let capture_result = capture::run(&mut ring, &mut sender, Arc::clone(&stop), OPUS_BITRATE);
+    // Claim the shutdown so the session monitor doesn't also report a cause.
+    if capture_result.is_err() {
+        stop.store(true, Ordering::Relaxed);
+    }
 
     sender.stop();
-    graceful_shutdown(&channel, &session.transport_id, &session.session_id);
+    drop(session);
     // drop(channel) must precede monitor.join(): it releases the incoming
     // Sender the monitor is blocked on, otherwise the join deadlocks.
     drop(channel);
     let _ = monitor.join();
     drop(sink);
     capture_result
-}
-
-/// STOP first, then two CLOSEs — CLOSE alone doesn't unload the mirroring app.
-/// Order per Chromium `cast_activity_manager.cc::TerminateSession`.
-fn graceful_shutdown(channel: &cast_channel::CastChannel, transport_id: &str, session_id: &str) {
-    let _ = mirroring::send_stop(channel, session_id);
-    let _ = channel.close_transport(transport_id);
-    let _ = channel.close_transport(PLATFORM_RECEIVER_ID);
 }
 
 fn spawn_session_monitor(

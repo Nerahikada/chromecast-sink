@@ -28,7 +28,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
             libssl-dev \
-            libpulse-dev \
             libopus-dev \
             libpipewire-0.3-dev \
             libclang-dev \
