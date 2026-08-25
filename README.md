@@ -2,29 +2,15 @@
 
 Use Google Chromecast / Nest devices as a Linux speaker output.
 
-Creates a PipeWire virtual sink that appears in your system's sound settings. Select it as your audio output and all sound is streamed to the Chromecast in real time over low-latency Cast Streaming (Opus over encrypted Cast RTP).
-
 ## Requirements
 
 **OS**: Linux with PipeWire (tested on Ubuntu 25.10, 26.04).
 
-### Runtime
+**Build**: Rust 1.85+ and:
 
 ```bash
-sudo apt install libpipewire-0.3-0t64 libopus0
+sudo apt install build-essential libpipewire-0.3-dev libopus-dev libclang-dev pkg-config
 ```
-
-The PipeWire stack itself (`pipewire`, `wireplumber`) is preinstalled on any modern Ubuntu desktop. On a headless machine, install those explicitly too. The PulseAudio compatibility layer (`pipewire-pulse`) is not needed by this tool, though your desktop's sound settings may still use it.
-
-### Build
-
-Rust 1.85+ and:
-
-```bash
-sudo apt install libpipewire-0.3-dev libopus-dev libclang-dev pkg-config
-```
-
-Each `-dev` package depends on its runtime counterpart above, so on a build-and-run machine this line alone covers both.
 
 ## Installation
 
