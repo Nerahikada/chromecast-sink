@@ -10,7 +10,15 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
@@ -35,6 +43,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: chromecast-sink-linux-x86_64
+          name: chromecast-sink-linux-${{ matrix.arch }}
           path: target/release/chromecast-sink
           if-no-files-found: error
