@@ -66,9 +66,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
     let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
 
     println!(
-        "\nStreaming to \"{}\" via Cast Streaming (UDP).\n\
-         Select \"Chromecast - {}\" as your audio output to start casting.\n\
-         Press Ctrl+C to stop.",
+        "\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.",
         device.friendly_name, device.friendly_name,
     );
 

@@ -132,8 +132,7 @@ pub fn run(
             let elapsed = now.duration_since(first_frame.unwrap()).as_secs_f64();
             let fps = if elapsed > 0.0 { frames as f64 / elapsed } else { 0.0 };
             log::info!(
-                "Capture stats: {frames} frames in {elapsed:.1}s ({fps:.1} fps, expected ~100), \
-                 {dropped_total} dropped, {send_failures} send failures, backlog {:.1} ms",
+                "Capture stats: {frames} frames in {elapsed:.1}s ({fps:.1} fps, expected ~100), {dropped_total} dropped, {send_failures} send failures, backlog {:.1} ms",
                 ring.available_frames() as f64 * 1000.0 / SAMPLE_RATE as f64,
             );
             last_stats = now;

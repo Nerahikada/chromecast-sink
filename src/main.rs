@@ -6,8 +6,7 @@ use chromecast_sink::pipeline;
 #[command(
     name = "chromecast-sink",
     version,
-    about = "Use a Google Chromecast / Nest device as a Linux speaker output. \
-             Creates a PipeWire virtual sink that streams audio to the Chromecast."
+    about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."
 )]
 struct Cli {
     /// Connect to a specific device by name.
