@@ -55,11 +55,7 @@ impl VirtualSink {
         // Bounded so a hung pipewire server can't wedge the CLI at startup.
         match ready_rx.recv_timeout(READY_TIMEOUT) {
             Ok(r) => r?,
-            Err(mpsc::RecvTimeoutError::Timeout) => bail!(
-                "virtual sink was not started within {}s — is a session manager \
-                 (wireplumber) running?",
-                READY_TIMEOUT.as_secs(),
-            ),
+            Err(mpsc::RecvTimeoutError::Timeout) => bail!("virtual sink was not started within {}s — is a session manager (wireplumber) running?", READY_TIMEOUT.as_secs()),
             Err(mpsc::RecvTimeoutError::Disconnected) => bail!("pipewire thread died before sink was ready"),
         }
 

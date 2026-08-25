@@ -18,11 +18,7 @@ pub fn run(device_name: Option<&str>) -> Result<()> {
     println!("Discovering Chromecast devices...");
     let devices = discovery::discover(device_name, TIMEOUT)?;
     if devices.is_empty() {
-        bail!(
-            "No Chromecast devices found.\n\
-             Check that your device is powered on, on the same network, and\n\
-             that multicast UDP 5353 is not blocked by a firewall."
-        );
+        bail!("No Chromecast devices found.\nCheck that your device is powered on, on the same network, and that multicast UDP 5353 is not blocked by a firewall.");
     }
 
     let device = pick_device(devices)?;
