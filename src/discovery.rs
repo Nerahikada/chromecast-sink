@@ -47,6 +47,7 @@ fn is_audio_only_model(model: &str) -> bool {
 
 /// If `wanted_name` is given, returns as soon as it's found; otherwise waits the full timeout.
 pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
+    log::debug!("mDNS: browsing {SERVICE} for up to {timeout:?}");
     let daemon = ServiceDaemon::new().context("start mdns daemon")?;
     let receiver = daemon.browse(SERVICE).context("start browse")?;
 
@@ -61,9 +62,13 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 for prop in info.get_properties().iter() {
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
                 }
-                let Some(ip) = info.get_addresses_v4().iter().next().copied() else {
-                    continue;
-                };
+                let ip = info.get_addresses_v4().iter().next().copied();
+                log::debug!(
+                    "mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}",
+                    info.get_fullname(), info.get_hostname(), info.get_addresses_v4(),
+                    txt.get("fn"), txt.get("md"), txt.get("ca"),
+                );
+                let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
                     let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
                     devices.insert(dev.friendly_name.clone(), dev);
@@ -72,7 +77,10 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     }
                 }
             }
-            Ok(_) => {}
+            Ok(ServiceEvent::ServiceFound(_, name)) => log::debug!("mDNS: ServiceFound {name} (awaiting resolve)"),
+            Ok(ServiceEvent::ServiceRemoved(_, name)) => log::debug!("mDNS: ServiceRemoved {name}"),
+            Ok(ServiceEvent::SearchStarted(s)) => log::debug!("mDNS: SearchStarted {s}"),
+            Ok(ServiceEvent::SearchStopped(s)) => log::debug!("mDNS: SearchStopped {s}"),
             Err(_) => {
                 // A dead daemon returns instantly forever; falling through spins.
                 if receiver.is_disconnected() {
@@ -83,6 +91,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
         }
     }
 
+    log::debug!("mDNS: browse done, {} device(s) resolved", devices.len());
     let _ = daemon.shutdown();
 
     let mut out: Vec<Device> = devices.into_values().collect();
