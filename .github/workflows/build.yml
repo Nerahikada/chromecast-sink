@@ -42,6 +42,15 @@ jobs:
           RUSTFLAGS="-L /usr/lib/$(gcc -print-multiarch) -l static=opus" \
             cargo build --release --locked
 
+      # pkg-config also emits `-l dylib=opus`; the build above wins only via linker --as-needed. Guard against a toolchain change that flips the outcome.
+      - name: Verify libopus is statically linked
+        run: |
+          if ldd target/release/chromecast-sink | grep -q libopus; then
+            echo "::error::libopus is dynamically linked (expected static)"
+            ldd target/release/chromecast-sink
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
           name: chromecast-sink-linux-${{ matrix.arch }}
