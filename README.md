@@ -4,7 +4,7 @@ Use Google Chromecast / Nest devices as a Linux speaker output.
 
 ## Requirements
 
-**OS**: Linux with PipeWire (tested on Ubuntu 24.04, 26.04).
+**OS**: Linux with PipeWire (tested on Ubuntu 22.04 with PipeWire installed, 24.04, 26.04).
 
 **Build**: Rust 1.85+ and:
 
