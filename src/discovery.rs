@@ -41,12 +41,9 @@ fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
 }
 
 fn is_audio_only_model(model: &str) -> bool {
+    const AUDIO_ONLY: &[&str] = &["google home", "nest mini", "nest audio", "home mini", "home max"];
     let m = model.to_ascii_lowercase();
-    m.contains("google home")
-        || m.contains("nest mini")
-        || m.contains("nest audio")
-        || m.contains("home mini")
-        || m.contains("home max")
+    AUDIO_ONLY.iter().any(|name| m.contains(name))
 }
 
 /// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not); otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
