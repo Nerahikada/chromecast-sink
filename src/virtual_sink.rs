@@ -5,13 +5,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use pipewire::{
-    self as pw,
-    main_loop::MainLoop,
-    properties::properties,
-    spa,
-    stream::{Stream, StreamFlags, StreamState},
-};
+use pipewire::{self as pw, main_loop::MainLoop, properties::properties, spa, stream::{Stream, StreamFlags, StreamState}};
 use spa::pod::serialize::PodSerializer;
 
 use crate::audio_ring::{self, RingConsumer, RingProducer};
@@ -39,18 +33,10 @@ impl VirtualSink {
         let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
         let sink_name_c = sink_name.clone();
-        let thread = std::thread::Builder::new()
-            .name("pw-sink".into())
-            .spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx))
-            .expect("spawn pw-sink thread");
+        let thread = std::thread::Builder::new().name("pw-sink".into()).spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx)).expect("spawn pw-sink thread");
 
         // `channel::Sender` has no `Drop`, so a return before this leaves an orphan sink registered in PipeWire.
-        let sink = Self {
-            sink_name,
-            consumer: Some(consumer),
-            quit_tx: Some(quit_tx),
-            thread: Some(thread),
-        };
+        let sink = Self { sink_name, consumer: Some(consumer), quit_tx: Some(quit_tx), thread: Some(thread) };
 
         // Bounded so a hung pipewire server can't wedge the CLI at startup.
         match ready_rx.recv_timeout(READY_TIMEOUT) {
@@ -109,27 +95,12 @@ fn enum_format_pod() -> Result<Vec<u8>> {
     position[1] = spa::sys::SPA_AUDIO_CHANNEL_FR;
     info.set_position(position);
 
-    let bytes = PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &spa::pod::Value::Object(spa::pod::Object {
-            type_: spa::sys::SPA_TYPE_OBJECT_Format,
-            id: spa::sys::SPA_PARAM_EnumFormat,
-            properties: info.into(),
-        }),
-    )
-    .context("serialize EnumFormat")?
-    .0
-    .into_inner();
+    let object = spa::pod::Object { type_: spa::sys::SPA_TYPE_OBJECT_Format, id: spa::sys::SPA_PARAM_EnumFormat, properties: info.into() };
+    let bytes = PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object)).context("serialize EnumFormat")?.0.into_inner();
     Ok(bytes)
 }
 
-fn run_pw_thread(
-    sink_name: String,
-    description: String,
-    mut producer: RingProducer,
-    quit_rx: pw::channel::Receiver<()>,
-    ready_tx: mpsc::Sender<Result<()>>,
-) {
+fn run_pw_thread(sink_name: String, description: String, mut producer: RingProducer, quit_rx: pw::channel::Receiver<()>, ready_tx: mpsc::Sender<Result<()>>) {
     pw::init();
     let closer = producer.closer();
 
@@ -190,10 +161,7 @@ fn run_pw_thread(
                     }
                     closer_state.close();
                 }
-                StreamState::Unconnected
-                    if signalled_c.load(Ordering::Relaxed)
-                        && !shutdown_c.load(Ordering::Relaxed) =>
-                {
+                StreamState::Unconnected if signalled_c.load(Ordering::Relaxed) && !shutdown_c.load(Ordering::Relaxed) => {
                     log::error!("sink stream was disconnected");
                     closer_state.close();
                 }
@@ -209,16 +177,8 @@ fn run_pw_thread(
             if info.parse(param).is_err() {
                 return;
             }
-            if info.format() != spa::param::audio::AudioFormat::S16LE
-                || info.rate() != SAMPLE_RATE
-                || info.channels() != CHANNELS as u32
-            {
-                log::error!(
-                    "sink negotiated {:?} / {} Hz / {} ch, expected S16LE / {SAMPLE_RATE} / {CHANNELS}",
-                    info.format(),
-                    info.rate(),
-                    info.channels(),
-                );
+            if info.format() != spa::param::audio::AudioFormat::S16LE || info.rate() != SAMPLE_RATE || info.channels() != CHANNELS as u32 {
+                log::error!("sink negotiated {:?} / {} Hz / {} ch, expected S16LE / {SAMPLE_RATE} / {CHANNELS}", info.format(), info.rate(), info.channels());
             }
         })
         .process(move |stream, _| {
@@ -250,12 +210,7 @@ fn run_pw_thread(
     };
 
     let mut params = [spa::pod::Pod::from_bytes(&pod).expect("EnumFormat pod is well-formed")];
-    if let Err(e) = stream.connect(
-        spa::utils::Direction::Input,
-        None,
-        StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
-        &mut params,
-    ) {
+    if let Err(e) = stream.connect(spa::utils::Direction::Input, None, StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS, &mut params) {
         let _ = ready_tx.send(Err(anyhow!("connect sink stream: {e}")));
         closer.close();
         return;

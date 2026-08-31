@@ -84,12 +84,7 @@ impl CastChannel {
     }
 
     pub fn send_json(&self, destination: &str, namespace: &str, payload: &Value) -> Result<()> {
-        self.send(CastMessage {
-            source: local_sender_id().into(),
-            destination: destination.into(),
-            namespace: namespace.into(),
-            payload: payload.to_string(),
-        })
+        self.send(CastMessage { source: local_sender_id().into(), destination: destination.into(), namespace: namespace.into(), payload: payload.to_string() })
     }
 
     /// Required before sending any app message to `destination`.
@@ -121,13 +116,8 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
 
-    let provider = CryptoProvider::get_default()
-        .expect("rustls default CryptoProvider not installed")
-        .clone();
-    let cfg = ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
-        .with_no_client_auth();
+    let provider = CryptoProvider::get_default().expect("rustls default CryptoProvider not installed").clone();
+    let cfg = ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(provider))).with_no_client_auth();
     let name = ServerName::try_from(host).map(|n| n.to_owned()).map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
     let mut conn = ClientConnection::new(Arc::new(cfg), name).context("TLS client init")?;
     conn.complete_io(&mut tcp).context("TLS handshake")?;
@@ -139,31 +129,15 @@ pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
     let (incoming_tx, incoming_rx) = mpsc::channel::<CastMessage>();
     let stop = Arc::new(AtomicBool::new(false));
 
-    write_message(
-        &mut tls,
-        &CastMessage {
-            source: local_sender_id().into(),
-            destination: PLATFORM_RECEIVER_ID.into(),
-            namespace: NS_CONNECTION.into(),
-            payload: build_connect_payload().to_string(),
-        },
-    )?;
+    write_message(&mut tls, &CastMessage { source: local_sender_id().into(), destination: PLATFORM_RECEIVER_ID.into(), namespace: NS_CONNECTION.into(), payload: build_connect_payload().to_string() })?;
 
     let stop2 = Arc::clone(&stop);
-    let thread = std::thread::Builder::new()
-        .name("cast-dispatcher".into())
-        .spawn(move || dispatcher(tls, outbound_rx, incoming_tx, stop2))
-        .expect("spawn dispatcher");
+    let thread = std::thread::Builder::new().name("cast-dispatcher".into()).spawn(move || dispatcher(tls, outbound_rx, incoming_tx, stop2)).expect("spawn dispatcher");
 
     Ok((CastChannel { outbound: outbound_tx, stop, thread: Some(thread) }, incoming_rx))
 }
 
-fn dispatcher(
-    mut tls: StreamOwned<ClientConnection, TcpStream>,
-    outbound: Receiver<CastMessage>,
-    incoming: Sender<CastMessage>,
-    stop: Arc<AtomicBool>,
-) {
+fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Receiver<CastMessage>, incoming: Sender<CastMessage>, stop: Arc<AtomicBool>) {
     let mut buf = vec![0u8; 8192];
     let mut acc: Vec<u8> = Vec::new();
     let mut last_ping = Instant::now();
@@ -205,12 +179,7 @@ fn dispatcher(
                     if msg.namespace == NS_HEARTBEAT {
                         // Never forward heartbeat to the caller — dispatcher-internal.
                         if payload_type_is(&msg.payload, "PING") {
-                            let pong = CastMessage {
-                                source: local_sender_id().into(),
-                                destination: msg.source.clone(),
-                                namespace: NS_HEARTBEAT.into(),
-                                payload: r#"{"type":"PONG"}"#.into(),
-                            };
+                            let pong = CastMessage { source: local_sender_id().into(), destination: msg.source.clone(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PONG"}"#.into() };
                             let _ = write_message(&mut tls, &pong);
                         }
                     } else {
@@ -240,12 +209,7 @@ fn dispatcher(
         }
 
         if last_ping.elapsed() >= HEARTBEAT_INTERVAL {
-            let ping = CastMessage {
-                source: local_sender_id().into(),
-                destination: PLATFORM_RECEIVER_ID.into(),
-                namespace: NS_HEARTBEAT.into(),
-                payload: r#"{"type":"PING"}"#.into(),
-            };
+            let ping = CastMessage { source: local_sender_id().into(), destination: PLATFORM_RECEIVER_ID.into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() };
             let _ = write_message(&mut tls, &ping);
             last_ping = Instant::now();
         }
@@ -408,32 +372,15 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
 struct NoVerify(Arc<CryptoProvider>);
 
 impl ServerCertVerifier for NoVerify {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
+    fn verify_server_cert(&self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>], _server_name: &ServerName<'_>, _ocsp: &[u8], _now: UnixTime) -> Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
     }
 
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
     }
 
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
     }
 
@@ -449,24 +396,14 @@ mod tests {
     /// Expected hex is protoc output for openscreen's `cast_channel.proto`.
     #[test]
     fn encoding_matches_official_protobuf() {
-        let ping = CastMessage {
-            source: "sender-0".into(),
-            destination: "receiver-0".into(),
-            namespace: NS_HEARTBEAT.into(),
-            payload: r#"{"type":"PING"}"#.into(),
-        };
+        let ping = CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() };
         assert_eq!(
             hex::encode(encode_cast_message(&ping)),
             "0800120873656e6465722d301a0a72656365697665722d30222775726e3a782d\
              636173743a636f6d2e676f6f676c652e636173742e74702e6865617274626561\
              742800320f7b2274797065223a2250494e47227d",
         );
-        let offer = CastMessage {
-            source: "sender-0".into(),
-            destination: "173cb36a-a488-4fc3-963a-651334ad51c1".into(),
-            namespace: NS_WEBRTC.into(),
-            payload: r#"{"type":"OFFER","seqNum":1}"#.into(),
-        };
+        let offer = CastMessage { source: "sender-0".into(), destination: "173cb36a-a488-4fc3-963a-651334ad51c1".into(), namespace: NS_WEBRTC.into(), payload: r#"{"type":"OFFER","seqNum":1}"#.into() };
         assert_eq!(
             hex::encode(encode_cast_message(&offer)),
             "0800120873656e6465722d301a2431373363623336612d613438382d34666333\
@@ -478,12 +415,7 @@ mod tests {
 
     #[test]
     fn roundtrip_cast_message() {
-        let m = CastMessage {
-            source: "sender-0".into(),
-            destination: "receiver-0".into(),
-            namespace: "urn:x-cast:foo".into(),
-            payload: r#"{"type":"PING"}"#.into(),
-        };
+        let m = CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: "urn:x-cast:foo".into(), payload: r#"{"type":"PING"}"#.into() };
         let encoded = encode_cast_message(&m);
         let decoded = decode_cast_message(&encoded).unwrap();
         assert_eq!(decoded.source, m.source);
@@ -493,12 +425,7 @@ mod tests {
     }
 
     fn sample() -> CastMessage {
-        CastMessage {
-            source: "sender-0".into(),
-            destination: "receiver-0".into(),
-            namespace: NS_HEARTBEAT.into(),
-            payload: r#"{"type":"PING"}"#.into(),
-        }
+        CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() }
     }
 
     #[test]

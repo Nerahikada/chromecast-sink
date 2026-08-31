@@ -160,11 +160,7 @@ impl CastRtpSender {
         if let Some(t) = self.rtcp_thread.take() {
             let _ = t.join();
         }
-        log::info!(
-            "Cast RTP sender stopped (sent {} packets, {} bytes)",
-            self.frame_id.load(Ordering::Relaxed),
-            self.octet_count.load(Ordering::Relaxed),
-        );
+        log::info!("Cast RTP sender stopped (sent {} packets, {} bytes)", self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed));
     }
 }
 
@@ -314,24 +310,15 @@ mod tests {
     #[test]
     fn packet_matches_openscreen_layout() {
         let s = CastRtpSender::new(diff_cfg()).unwrap();
-        assert_eq!(
-            hex::encode(s.build_packet(b"payload", 5)),
-            "80ff000500000960deadbeefc00500000000057061796c6f6164"
-        );
+        assert_eq!(hex::encode(s.build_packet(b"payload", 5)), "80ff000500000960deadbeefc00500000000057061796c6f6164");
         // frame_id > 255: both offset 13 and offset 18 truncate to low 8 bits.
-        assert_eq!(
-            hex::encode(s.build_packet(b"xy", 300)),
-            "80ff012c00023280deadbeefc02c000000002c7879"
-        );
+        assert_eq!(hex::encode(s.build_packet(b"xy", 300)), "80ff012c00023280deadbeefc02c000000002c7879");
     }
 
     #[test]
     fn rtcp_sr_matches_reference_vector() {
         let sr = build_rtcp_sr_at(0xDEAD_BEEF, 12345, 987_654, Duration::new(1_234_567_890, 500_000_000));
-        assert_eq!(
-            hex::encode(sr),
-            "80c80006deadbeefcd40815280000000005a6ae000003039000f1206"
-        );
+        assert_eq!(hex::encode(sr), "80c80006deadbeefcd40815280000000005a6ae000003039000f1206");
     }
 
     #[test]

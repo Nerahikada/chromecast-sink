@@ -12,13 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use chromecast_sink::{
-    capture,
-    cast_channel,
-    cast_rtp::{self, CastRtpSender, StatsHandle},
-    mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE},
-    virtual_sink::VirtualSink,
-};
+use chromecast_sink::{capture, cast_channel, cast_rtp::{self, CastRtpSender, StatsHandle}, mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE}, virtual_sink::VirtualSink};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -67,18 +61,11 @@ fn make_tone_wav(path: &str) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).format_timestamp_millis().init();
 
     let args: Vec<String> = std::env::args().collect();
     let no_rtcp = args.iter().any(|a| a == "--no-rtcp");
-    let host = args
-        .iter()
-        .skip(1)
-        .find(|a| !a.starts_with("--"))
-        .cloned()
-        .unwrap_or_else(|| "192.168.238.100".into());
+    let host = args.iter().skip(1).find(|a| !a.starts_with("--")).cloned().unwrap_or_else(|| "192.168.238.100".into());
 
     let tone_path = std::env::temp_dir().join("chromecast_sink_e2e_tone.wav");
     let tone = tone_path.to_str().expect("temp path is valid UTF-8");
@@ -127,12 +114,7 @@ fn main() -> Result<()> {
     let silence = snapshot(&stats, "silence");
 
     println!("injecting tone via pw-cat...");
-    let mut player = Command::new("pw-cat")
-        .arg("--playback")
-        .arg("--target")
-        .arg(&sink.sink_name)
-        .arg(tone)
-        .spawn()?;
+    let mut player = Command::new("pw-cat").arg("--playback").arg("--target").arg(&sink.sink_name).arg(tone).spawn()?;
     thread::sleep(Duration::from_secs(1));
     let tone_bpf = snapshot(&stats, "tone");
     let _ = player.wait();

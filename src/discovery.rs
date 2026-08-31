@@ -68,11 +68,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
                 }
                 let ip = info.get_addresses_v4().iter().next().copied();
-                log::debug!(
-                    "mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}",
-                    info.get_fullname(), info.get_hostname(), info.get_addresses_v4(),
-                    txt.get("fn"), txt.get("md"), txt.get("ca"),
-                );
+                log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), txt.get("fn"), txt.get("md"), txt.get("ca"));
                 let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
                     let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
