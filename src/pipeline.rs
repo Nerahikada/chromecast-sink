@@ -28,13 +28,13 @@ pub fn run(device_name: Option<&str>) -> Result<()> {
 /// Bypasses mDNS discovery; used by integration tests that can't rely on multicast.
 pub fn run_with_device(device: Device) -> Result<()> {
     println!("Selected: {}", device.friendly_name);
-    log::info!("Chromecast: {} ({:?})", device.host, device.model);
+    log::info!("Chromecast: {}:{} ({:?})", device.host, device.port, device.model);
 
     println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
     let mut sink = VirtualSink::new(&device.friendly_name)?;
 
     println!("Connecting to Chromecast...");
-    let (channel, incoming) = cast_channel::connect(&device.host)?;
+    let (channel, incoming) = cast_channel::connect(&device.host, device.port)?;
 
     println!("Launching mirroring receiver...");
     let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };

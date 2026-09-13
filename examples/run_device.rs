@@ -12,6 +12,7 @@ fn main() {
         friendly_name: "Test Nest".into(),
         model: Some("Google Nest Mini".into()),
         host,
+        port: 8009,
         is_audio_only: true,
     };
     if let Err(e) = pipeline::run_with_device(device) {

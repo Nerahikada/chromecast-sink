@@ -89,7 +89,7 @@ fn main() -> Result<()> {
     println!("  sink   : {}", sink.sink_name);
 
     println!("Connecting to {host}...");
-    let (channel, incoming) = cast_channel::connect(&host)?;
+    let (channel, incoming) = cast_channel::connect(&host, 8009)?;
     let session = mirroring::launch_mirroring(&channel, &incoming, StreamMode::AudioOnly, TIMEOUT)?;
     channel.connect_transport(&session.transport_id)?;
 

@@ -7,10 +7,11 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use pipewire::{
     self as pw,
-    main_loop::MainLoop,
+    context::ContextRc,
+    main_loop::MainLoopRc,
     properties::properties,
     spa,
-    stream::{Stream, StreamFlags, StreamState},
+    stream::{StreamFlags, StreamRc, StreamState},
 };
 use spa::pod::serialize::PodSerializer;
 
@@ -147,10 +148,10 @@ fn run_pw_thread(
     };
 
     let init: Result<_> = (|| {
-        let mainloop = MainLoop::new(None).context("MainLoop")?;
-        let context = pw::context::Context::new(&mainloop).context("Context")?;
-        let core = context.connect(None).context("Connect")?;
-        let stream = Stream::new(&core, "chromecast-sink", props).context("Stream")?;
+        let mainloop = MainLoopRc::new(None).context("MainLoop")?;
+        let context = ContextRc::new(&mainloop, None).context("Context")?;
+        let core = context.connect_rc(None).context("Connect")?;
+        let stream = StreamRc::new(core.clone(), "chromecast-sink", props).context("Stream")?;
         let pod = enum_format_pod()?;
         Ok((mainloop, context, core, stream, pod))
     })();

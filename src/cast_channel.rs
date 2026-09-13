@@ -113,11 +113,11 @@ impl Drop for CastChannel {
     }
 }
 
-pub fn connect(host: &str) -> Result<(CastChannel, Receiver<CastMessage>)> {
+pub fn connect(host: &str, port: u16) -> Result<(CastChannel, Receiver<CastMessage>)> {
     // ring provider is process-global; Err on subsequent calls is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let mut tcp = TcpStream::connect((host, 8009)).with_context(|| format!("TCP connect to {host}:8009"))?;
+    let mut tcp = TcpStream::connect((host, port)).with_context(|| format!("TCP connect to {host}:{port}"))?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
 
