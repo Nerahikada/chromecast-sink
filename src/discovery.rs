@@ -41,12 +41,9 @@ fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
 }
 
 fn is_audio_only_model(model: &str) -> bool {
+    const AUDIO_ONLY: &[&str] = &["google home", "nest mini", "nest audio", "home mini", "home max"];
     let m = model.to_ascii_lowercase();
-    m.contains("google home")
-        || m.contains("nest mini")
-        || m.contains("nest audio")
-        || m.contains("home mini")
-        || m.contains("home max")
+    AUDIO_ONLY.iter().any(|name| m.contains(name))
 }
 
 /// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not); otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
@@ -68,11 +65,7 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
                 }
                 let ip = info.get_addresses_v4().iter().next().copied();
-                log::debug!(
-                    "mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}",
-                    info.get_fullname(), info.get_hostname(), info.get_addresses_v4(),
-                    txt.get("fn"), txt.get("md"), txt.get("ca"),
-                );
+                log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), txt.get("fn"), txt.get("md"), txt.get("ca"));
                 let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
                     let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));

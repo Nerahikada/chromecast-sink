@@ -30,24 +30,14 @@ fn frames_for_ms(ms: usize) -> usize {
     ms * SAMPLE_RATE as usize / 1000
 }
 
-pub fn run(
-    ring: &mut RingConsumer,
-    sender: &mut CastRtpSender,
-    stop: Arc<AtomicBool>,
-    bit_rate: i32,
-) -> Result<()> {
+pub fn run(ring: &mut RingConsumer, sender: &mut CastRtpSender, stop: Arc<AtomicBool>, bit_rate: i32) -> Result<()> {
     let frame_frames = OPUS_SAMPLES_PER_FRAME as usize;
     let threshold = frames_for_ms(DRAIN_THRESHOLD_MS);
     let target = frames_for_ms(DRAIN_TARGET_MS);
     assert!(threshold + frame_frames + MAX_EXPECTED_QUANTUM <= ring.capacity_frames());
 
     let mut encoder = OpusEncoder::new(SAMPLE_RATE, CHANNELS, bit_rate)?;
-    log::info!(
-        "Capture started: Opus {} kbps, {} ms frames, encoder lookahead {:.1} ms",
-        bit_rate / 1000,
-        OPUS_SAMPLES_PER_FRAME * 1000 / SAMPLE_RATE,
-        encoder.lookahead_samples() as f64 * 1000.0 / SAMPLE_RATE as f64,
-    );
+    log::info!("Capture started: Opus {} kbps, {} ms frames, encoder lookahead {:.1} ms", bit_rate / 1000, OPUS_SAMPLES_PER_FRAME * 1000 / SAMPLE_RATE, encoder.lookahead_samples() as f64 * 1000.0 / SAMPLE_RATE as f64);
 
     let mut pcm = vec![0i16; frame_frames * CHANNELS as usize];
 
@@ -72,10 +62,7 @@ pub fn run(
             let dropped = avail - target;
             ring.skip_frames(dropped);
             dropped_total += dropped;
-            log::warn!(
-                "Fell behind; dropped {dropped} frames ({} ms) to restore latency",
-                dropped * 1000 / SAMPLE_RATE as usize,
-            );
+            log::warn!("Fell behind; dropped {dropped} frames ({} ms) to restore latency", dropped * 1000 / SAMPLE_RATE as usize);
             continue;
         }
 
@@ -93,21 +80,14 @@ pub fn run(
         let now = Instant::now();
         if first_frame.is_none() {
             first_frame = Some(now);
-            log::info!(
-                "First audio frame encoded ({} ms after start)",
-                (now - start).as_millis()
-            );
+            log::info!("First audio frame encoded ({} ms after start)", (now - start).as_millis());
         }
 
         let opus = encoder.encode(&pcm)?;
         match sender.send_frame(opus) {
             Ok(()) => {
                 if let Some(o) = outage.take() {
-                    log::warn!(
-                        "UDP send recovered; discarded {} frames over {} ms",
-                        o.frames,
-                        now.duration_since(o.since).as_millis(),
-                    );
+                    log::warn!("UDP send recovered; discarded {} frames over {} ms", o.frames, now.duration_since(o.since).as_millis());
                 }
                 frames += 1;
             }
@@ -131,10 +111,7 @@ pub fn run(
         if now.duration_since(last_stats).as_secs_f64() >= 5.0 {
             let elapsed = now.duration_since(first_frame.unwrap()).as_secs_f64();
             let fps = if elapsed > 0.0 { frames as f64 / elapsed } else { 0.0 };
-            log::info!(
-                "Capture stats: {frames} frames in {elapsed:.1}s ({fps:.1} fps, expected ~100), {dropped_total} dropped, {send_failures} send failures, backlog {:.1} ms",
-                ring.available_frames() as f64 * 1000.0 / SAMPLE_RATE as f64,
-            );
+            log::info!("Capture stats: {frames} frames in {elapsed:.1}s ({fps:.1} fps, expected ~100), {dropped_total} dropped, {send_failures} send failures, backlog {:.1} ms", ring.available_frames() as f64 * 1000.0 / SAMPLE_RATE as f64);
             last_stats = now;
         }
     }

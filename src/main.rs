@@ -22,9 +22,7 @@ fn main() {
     let cli = Cli::parse();
 
     let level = if cli.verbose { "debug" } else { "warn" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
-        .format_timestamp_millis()
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).format_timestamp_millis().init();
 
     if let Err(e) = pipeline::run(cli.device.as_deref()) {
         eprintln!("Error: {e:#}");

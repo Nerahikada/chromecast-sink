@@ -65,10 +65,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
 
-    println!(
-        "\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.",
-        device.friendly_name, device.friendly_name,
-    );
+    println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.", device.friendly_name, device.friendly_name);
 
     let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
     let capture_result = capture::run(&mut ring, &mut sender, Arc::clone(&stop), OPUS_BITRATE);
@@ -86,22 +83,14 @@ pub fn run_with_device(device: Device) -> Result<()> {
     capture_result
 }
 
-fn spawn_session_monitor(
-    incoming: Receiver<CastMessage>,
-    transport: String,
-    stop: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
+fn spawn_session_monitor(incoming: Receiver<CastMessage>, transport: String, stop: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("session-monitor".into())
         .spawn(move || {
-            // Default reason covers the recv-error path (dispatcher gone: our shutdown, or the TLS socket died).
-            // Overwritten if we see CLOSE.
+            // Default reason covers the recv-error path (dispatcher gone: our shutdown, or the TLS socket died). Overwritten if we see CLOSE.
             let mut reason = "Connection to Chromecast lost";
             while let Ok(msg) = incoming.recv() {
-                if msg.namespace == NS_CONNECTION
-                    && msg.source == transport
-                    && payload_type_is(&msg.payload, "CLOSE")
-                {
+                if msg.namespace == NS_CONNECTION && msg.source == transport && payload_type_is(&msg.payload, "CLOSE") {
                     reason = "Receiver closed the mirroring session";
                     break;
                 }
