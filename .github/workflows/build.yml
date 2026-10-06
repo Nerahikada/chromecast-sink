@@ -51,6 +51,12 @@ jobs:
             exit 1
           fi
 
+      # Same RUSTFLAGS as the build so dependency artifacts are reused instead of rebuilt.
+      - name: Run tests
+        run: |
+          RUSTFLAGS="-L /usr/lib/$(gcc -print-multiarch) -l static=opus" \
+            cargo test --release --locked
+
       - uses: actions/upload-artifact@v7
         with:
           name: chromecast-sink-linux-${{ matrix.arch }}
