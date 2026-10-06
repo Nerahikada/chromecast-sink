@@ -43,7 +43,7 @@ mdns-sd = "0.13"
 opus = "0.3"
 
 # pipewire-rs (virtual sink + capture in one stream)
-pipewire = "0.8"
+pipewire = "0.10"
 
 # Signal handling in pipeline (SIGINT + SIGTERM)
 ctrlc = { version = "3", features = ["termination"] }
