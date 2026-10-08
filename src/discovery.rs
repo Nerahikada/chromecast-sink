@@ -19,16 +19,18 @@ pub struct Device {
     pub friendly_name: String,
     pub model: Option<String>,
     pub host: String,
+    /// Cast v2 TCP port from mDNS. Devices use 8009; speaker groups run on the leader with a different port (e.g. 32012).
+    pub port: u16,
     pub is_audio_only: bool,
 }
 
 impl Device {
-    fn from_txt(host: String, txt: &HashMap<String, String>) -> Option<Self> {
+    fn from_txt(host: String, port: u16, txt: &HashMap<String, String>) -> Option<Self> {
         let friendly = txt.get("fn")?.to_string();
         let model = txt.get("md").cloned();
         let ca = txt.get("ca").and_then(|v| v.parse::<u32>().ok());
         let is_audio_only = is_audio_only_device(ca, model.as_deref());
-        Some(Self { friendly_name: friendly, model, host, is_audio_only })
+        Some(Self { friendly_name: friendly, model, host, port, is_audio_only })
     }
 }
 
@@ -65,9 +67,10 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     txt.insert(prop.key().to_string(), prop.val_str().to_string());
                 }
                 let ip = info.get_addresses_v4().iter().next().copied();
-                log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), txt.get("fn"), txt.get("md"), txt.get("ca"));
+                let port = info.get_port();
+                log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} port={} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), port, txt.get("fn"), txt.get("md"), txt.get("ca"));
                 let Some(ip) = ip else { continue };
-                if let Some(dev) = Device::from_txt(ip.to_string(), &txt) {
+                if let Some(dev) = Device::from_txt(ip.to_string(), port, &txt) {
                     let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
                     let is_new = devices.insert(dev.friendly_name.clone(), dev).is_none();
                     if is_new {
