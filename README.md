@@ -36,9 +36,11 @@ After starting, select **"Chromecast - \<device name\>"** as your audio output i
 
 ## Scope
 
-This tool does one thing: low-latency Cast Streaming to a single device.
+chromecast-sink uses Cast Streaming to send audio over UDP with low latency.
 
-If you want HTTP-based streaming instead — broader device compatibility and a virtual sink per discovered device, at the cost of several seconds of latency — use [p-cast](https://github.com/GenessyX/p-cast), which serves HLS segments over HTTP.
+It has only been tested on a Google Nest Mini, because that is the only Cast hardware the maintainer owns. Other devices and speaker groups are in scope but untested, so reports and pull requests are welcome.
+
+If you would rather have broader device compatibility and a virtual sink for every discovered device, and can live with several seconds of latency, use [p-cast](https://github.com/GenessyX/p-cast), which serves HLS segments over HTTP.
 
 ## Known Limitations
 
