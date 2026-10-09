@@ -247,31 +247,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_answer_rejects_port_above_u16() {
-        let v = serde_json::json!({"result": "ok", "answer": {"udpPort": 70000, "sendIndexes": [0], "ssrcs": [1]}});
-        let err = match parse_answer(&v) {
+    fn parse_answer_enforces_port_range() {
+        let with_port = |port: u64| parse_answer(&serde_json::json!({"result": "ok", "answer": {"udpPort": port, "sendIndexes": [0], "ssrcs": [1]}}));
+        assert!(with_port(0).is_err());
+        assert_eq!(with_port(65535).unwrap().udp_port, 65535);
+        let err = match with_port(70000) {
             Err(e) => e.to_string(),
             Ok(_) => panic!("expected error for udpPort 70000"),
         };
         assert!(err.contains("70000"), "error should name the offending value: {err}");
         assert!(err.contains("udpPort"), "error should mention the field: {err}");
-    }
-
-    #[test]
-    fn parse_answer_rejects_port_zero() {
-        let v = serde_json::json!({"result": "ok", "answer": {"udpPort": 0, "sendIndexes": [0], "ssrcs": [1]}});
-        assert!(parse_answer(&v).is_err());
-    }
-
-    #[test]
-    fn parse_answer_accepts_max_port() {
-        let v = serde_json::json!({"result": "ok", "answer": {"udpPort": 65535, "sendIndexes": [0], "ssrcs": [1]}});
-        assert_eq!(parse_answer(&v).unwrap().udp_port, 65535);
-    }
-
-    #[test]
-    fn parse_answer_accepts_typical_port() {
-        let v = serde_json::json!({"result": "ok", "answer": {"udpPort": 5004, "sendIndexes": [0], "ssrcs": [1]}});
-        assert_eq!(parse_answer(&v).unwrap().udp_port, 5004);
     }
 }

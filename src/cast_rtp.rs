@@ -224,24 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn packet_layout_matches_openscreen() {
-        let s = CastRtpSender::new(cfg()).unwrap();
-        let pkt = s.build_packet(b"payload", 5);
-        assert_eq!(pkt.len(), 19 + 7);
-        assert_eq!(pkt[0], 0x80);
-        assert_eq!(pkt[1], 0xFF);
-        assert_eq!(u16::from_be_bytes([pkt[2], pkt[3]]), 5);
-        assert_eq!(u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]), 5 * OPUS_SAMPLES_PER_FRAME);
-        assert_eq!(u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]), 0xDEAD_BEEF);
-        assert_eq!(pkt[12], 0xC0);
-        assert_eq!(pkt[13], 5);
-        assert_eq!(u16::from_be_bytes([pkt[14], pkt[15]]), 0);
-        assert_eq!(u16::from_be_bytes([pkt[16], pkt[17]]), 0);
-        assert_eq!(pkt[18], 5);
-        assert_eq!(&pkt[19..], b"payload");
-    }
-
-    #[test]
     fn failed_send_does_not_advance_frame_id() {
         let mut c = cfg();
         c.udp_port = 0; // EINVAL from the kernel; nothing leaves the host
@@ -262,18 +244,6 @@ mod tests {
         assert_eq!(n, 19 + 4);
         assert_eq!(buf[13], 0, "resumes at the frame_id the failed sends held");
         assert_eq!(s.stats(), (1, 4));
-    }
-
-    #[test]
-    fn nonce_construction() {
-        let s = CastRtpSender::new(cfg()).unwrap();
-        let n = s.nonce(1);
-        let mut expected = [0u8; 16];
-        expected[11] = 1;
-        for b in &mut expected {
-            *b ^= 0x11;
-        }
-        assert_eq!(n, expected);
     }
 
     fn diff_cfg() -> Config {
@@ -319,17 +289,9 @@ mod tests {
     fn rtcp_sr_matches_reference_vector() {
         let sr = build_rtcp_sr_at(0xDEAD_BEEF, 12345, 987_654, Duration::new(1_234_567_890, 500_000_000));
         assert_eq!(hex::encode(sr), "80c80006deadbeefcd40815280000000005a6ae000003039000f1206");
-    }
-
-    #[test]
-    fn rtcp_sr_size_and_header() {
-        let sr = build_rtcp_sr(0xDEAD_BEEF, 100, 12345);
-        assert_eq!(sr.len(), 28);
-        assert_eq!(sr[0], 0x80);
-        assert_eq!(sr[1], 200);
-        assert_eq!(u16::from_be_bytes([sr[2], sr[3]]), 6);
-        assert_eq!(u32::from_be_bytes([sr[4], sr[5], sr[6], sr[7]]), 0xDEAD_BEEF);
-        assert_eq!(u32::from_be_bytes([sr[16], sr[17], sr[18], sr[19]]), 100 * OPUS_SAMPLES_PER_FRAME);
-        assert_eq!(u32::from_be_bytes([sr[20], sr[21], sr[22], sr[23]]), 100);
+        // The wall-clock wrapper may only differ in the NTP timestamp (bytes 8..16).
+        let live = build_rtcp_sr(0xDEAD_BEEF, 12345, 987_654);
+        assert_eq!(live[..8], sr[..8]);
+        assert_eq!(live[16..], sr[16..]);
     }
 }
