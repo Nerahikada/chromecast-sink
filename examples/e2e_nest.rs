@@ -1,6 +1,8 @@
 //! Usage:
 //!   cargo run --example e2e_nest --release -- 192.168.238.100
 //!   cargo run --example e2e_nest --release -- 192.168.238.100 --no-rtcp
+//!   cargo run --example e2e_nest --release -- 192.168.238.100 --port=32012   (speaker group on its leader's IP)
+//!   cargo run --example e2e_nest --release -- 192.168.238.100 --video        (device with a screen)
 //!
 //! `--no-rtcp` disables Sender Reports to verify the receiver kills the
 //! mirroring app when SRs are absent.
@@ -65,6 +67,8 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     let no_rtcp = args.iter().any(|a| a == "--no-rtcp");
+    let mode = if args.iter().any(|a| a == "--video") { StreamMode::AudioVideo } else { StreamMode::AudioOnly };
+    let port: u16 = args.iter().find_map(|a| a.strip_prefix("--port=")).map(str::parse).transpose()?.unwrap_or(8009);
     let host = args.iter().skip(1).find(|a| !a.starts_with("--")).cloned().unwrap_or_else(|| "192.168.238.100".into());
 
     let tone_path = std::env::temp_dir().join("chromecast_sink_e2e_tone.wav");
@@ -75,9 +79,9 @@ fn main() -> Result<()> {
     let mut sink = VirtualSink::new("Test Nest")?;
     println!("  sink   : {}", sink.sink_name);
 
-    println!("Connecting to {host}...");
-    let (channel, incoming) = cast_channel::connect(&host, 8009)?;
-    let session = mirroring::launch_mirroring(&channel, &incoming, StreamMode::AudioOnly, TIMEOUT)?;
+    println!("Connecting to {host}:{port}...");
+    let (channel, incoming) = cast_channel::connect(&host, port)?;
+    let session = mirroring::launch_mirroring(&channel, &incoming, mode, TIMEOUT)?;
     channel.connect_transport(&session.transport_id)?;
 
     let offer = StreamOffer::default();
