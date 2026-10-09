@@ -34,7 +34,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
     let mut sink = VirtualSink::new(&device.friendly_name)?;
 
     println!("Connecting to Chromecast...");
-    let (channel, incoming) = cast_channel::connect(&device.host)?;
+    let (channel, incoming) = cast_channel::connect(&device.host, device.port)?;
 
     println!("Launching mirroring receiver...");
     let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };
