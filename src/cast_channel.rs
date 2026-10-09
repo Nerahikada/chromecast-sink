@@ -1,4 +1,4 @@
-//! Cast v2 channel: TLS to port 8009, length-prefixed CastMessage protobuf.
+//! Cast v2 channel: TLS to the port advertised over mDNS (8009 on single devices), length-prefixed CastMessage protobuf.
 //! One dispatcher thread owns the TLS stream; PINGs are auto-PONGed inline, everything else is forwarded to the caller.
 
 use std::io::{Read, Write};
