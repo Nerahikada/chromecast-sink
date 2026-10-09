@@ -30,6 +30,9 @@ chromecast-sink
 
 # Specify device by name
 chromecast-sink --device "Living Room speaker"
+
+# Skip mDNS discovery and connect by address (audio-only receivers; --port defaults to 8009)
+chromecast-sink --host 192.168.1.20
 ```
 
 After starting, select **"Chromecast - \<device name\>"** as your audio output in Settings > Sound.
