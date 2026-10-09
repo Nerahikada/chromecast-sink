@@ -25,6 +25,11 @@ pub fn run(device_name: Option<&str>) -> Result<()> {
     run_with_device(device)
 }
 
+/// Bypasses mDNS discovery for `--host`. Audio-only is assumed because the `ca` bits that pick the app only come from mDNS. The sink is named after `host:port` so a group and its leader on the same IP stay distinct.
+pub fn run_with_host(host: &str, port: u16) -> Result<()> {
+    run_with_device(Device { friendly_name: format!("{host}:{port}"), model: None, host: host.to_string(), port, is_audio_only: true })
+}
+
 /// Bypasses mDNS discovery; used by integration tests that can't rely on multicast.
 pub fn run_with_device(device: Device) -> Result<()> {
     println!("Selected: {}", device.friendly_name);
