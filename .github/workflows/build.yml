@@ -62,3 +62,25 @@ jobs:
           name: chromecast-sink-linux-${{ matrix.arch }}
           path: target/release/chromecast-sink
           if-no-files-found: error
+
+  # libopus is built from the bundled source via CMake (see .cargo/config.toml); MSVC and CMake come with the runner.
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Run tests
+        run: cargo test --release --locked
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chromecast-sink-windows-x86_64
+          path: target/release/chromecast-sink.exe
+          if-no-files-found: error

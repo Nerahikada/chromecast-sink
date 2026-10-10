@@ -225,9 +225,10 @@ mod tests {
 
     #[test]
     fn failed_send_does_not_advance_frame_id() {
-        let mut c = cfg();
-        c.udp_port = 0; // EINVAL from the kernel; nothing leaves the host
-        let mut s = CastRtpSender::new(c).unwrap();
+        let mut s = CastRtpSender::new(cfg()).unwrap();
+        // Broadcast without SO_BROADCAST: EACCES on Linux, WSAEACCES on Windows; nothing leaves the host.
+        // (Port 0 only fails on Linux — Windows accepts and drops it.)
+        s.dest = ("255.255.255.255".into(), 9);
 
         for _ in 0..3 {
             assert!(s.send_frame(b"opus").is_err());
