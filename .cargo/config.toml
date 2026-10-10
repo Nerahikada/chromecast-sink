@@ -1,0 +1,4 @@
+# audiopus_sys builds the bundled libopus via CMake; its CMakeLists declares a minimum below 3.5,
+# which CMake 4 refuses. Harmless on Linux (system libopus is used there via pkg-config).
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
