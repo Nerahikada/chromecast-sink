@@ -2,7 +2,7 @@
 //! One dispatcher thread owns the TLS stream; PINGs are auto-PONGed inline, everything else is forwarded to the caller.
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, OnceLock};
@@ -112,7 +112,10 @@ pub fn connect(host: &str, port: u16) -> Result<(CastChannel, Receiver<CastMessa
     // ring provider is process-global; Err on subsequent calls is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let mut tcp = TcpStream::connect((host, port)).with_context(|| format!("TCP connect to {host}:{port}"))?;
+    let mut addrs = (host, port).to_socket_addrs().with_context(|| format!("resolve {host}:{port}"))?;
+    let mut last_err = None;
+    let tcp = addrs.find_map(|addr| TcpStream::connect_timeout(&addr, HANDSHAKE_TIMEOUT).map_err(|e| last_err = Some(e)).ok());
+    let mut tcp = tcp.ok_or_else(|| last_err.unwrap_or_else(|| std::io::ErrorKind::AddrNotAvailable.into())).with_context(|| format!("TCP connect to {host}:{port}"))?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
 
