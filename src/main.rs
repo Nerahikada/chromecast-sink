@@ -13,12 +13,12 @@ struct Cli {
     #[arg(short, long, value_name = "NAME")]
     device: Option<String>,
 
-    /// Skip mDNS discovery and connect to this IP address or hostname directly. Audio-only receivers only.
+    /// Skip mDNS discovery and connect to this IPv4 address or hostname directly. Audio-only receivers only.
     #[arg(long, value_name = "HOST", conflicts_with = "device")]
     host: Option<String>,
 
     /// Cast v2 TCP port for --host. Single devices listen on 8009; a speaker group listens on its leader at a different port.
-    #[arg(long, value_name = "PORT", default_value_t = 8009, requires = "host", conflicts_with = "device")]
+    #[arg(long, value_name = "PORT", default_value_t = 8009, requires = "host", conflicts_with = "device", value_parser = clap::value_parser!(u16).range(1..))]
     port: u16,
 
     /// Enable verbose (debug) logging.
@@ -39,5 +39,22 @@ fn main() {
     if let Err(e) = result {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_and_port_constraints() {
+        let parse = |args: &[&str]| Cli::try_parse_from(std::iter::once("chromecast-sink").chain(args.iter().copied()));
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["--device", "X"]).is_ok());
+        assert_eq!(parse(&["--host", "192.168.1.20"]).ok().map(|c| c.port), Some(8009));
+        assert!(parse(&["--port", "32012"]).is_err());
+        assert!(parse(&["--device", "X", "--host", "192.168.1.20"]).is_err());
+        assert!(parse(&["--device", "X", "--port", "32012"]).is_err());
+        assert!(parse(&["--host", "192.168.1.20", "--port", "0"]).is_err());
     }
 }
