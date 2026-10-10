@@ -51,7 +51,10 @@ pub fn run_with_device(device: Device) -> Result<()> {
     println!("Connecting to Chromecast...");
     let (channel, incoming) = cast_channel::connect(&device.host, device.port)?;
 
+    #[cfg(not(windows))]
     println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
+    #[cfg(windows)]
+    println!("Starting loopback capture...");
     let mut sink = VirtualSink::new(&device.friendly_name)?;
 
     println!("Launching mirroring receiver...");
@@ -83,7 +86,10 @@ pub fn run_with_device(device: Device) -> Result<()> {
 
     let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
 
+    #[cfg(not(windows))]
     println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.", device.friendly_name, device.friendly_name);
+    #[cfg(windows)]
+    println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nEverything played on \"{}\" is cast.\nPress Ctrl+C to stop.", device.friendly_name, sink.sink_name);
 
     let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
     let capture_result = capture::run(&mut ring, &mut sender, Arc::clone(&stop), OPUS_BITRATE);
