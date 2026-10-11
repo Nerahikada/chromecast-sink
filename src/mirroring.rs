@@ -108,10 +108,9 @@ fn send_stop(channel: &CastChannel, session_id: &str) -> Result<()> {
     channel.send_json(PLATFORM_RECEIVER_ID, NS_RECEIVER, &json!({"type": "STOP", "requestId": new_request_id(), "sessionId": session_id}))
 }
 
-pub fn send_offer(channel: &CastChannel, incoming: &Receiver<CastMessage>, transport_id: &str, offer: &StreamOffer, timeout: Duration) -> Result<StreamAnswer> {
-    let seq_num = new_request_id() as i64;
-    // openscreen `AudioStream::ToJson`: sample rate rides in `timeBase`, not a separate `sampleRate` key.
-    let payload = json!({
+/// openscreen `AudioStream::ToJson`: sample rate rides in `timeBase`, not a separate `sampleRate` key.
+fn build_offer_payload(seq_num: i64, offer: &StreamOffer) -> Value {
+    json!({
         "type": "OFFER",
         "seqNum": seq_num,
         "offer": {
@@ -133,7 +132,12 @@ pub fn send_offer(channel: &CastChannel, incoming: &Receiver<CastMessage>, trans
                 "channels": CHANNELS,
             }],
         },
-    });
+    })
+}
+
+pub fn send_offer(channel: &CastChannel, incoming: &Receiver<CastMessage>, transport_id: &str, offer: &StreamOffer, timeout: Duration) -> Result<StreamAnswer> {
+    let seq_num = new_request_id() as i64;
+    let payload = build_offer_payload(seq_num, offer);
     log::info!("Sending OFFER (seqNum={seq_num}, ssrc={}, targetDelay={TARGET_DELAY_MS}ms)", offer.ssrc);
     channel.send_json(transport_id, NS_WEBRTC, &payload)?;
 
@@ -228,6 +232,35 @@ mod tests {
         tx.send(cast_msg(NS_RECEIVER, r#"{"requestId":7}"#)).unwrap();
         let got = wait_for_json_message(&rx, NS_RECEIVER, Instant::now() + Duration::from_secs(5), |v| Some(Ok(v.get("requestId").and_then(|r| r.as_u64()))));
         assert_eq!(got.unwrap(), Some(7));
+    }
+
+    #[test]
+    fn offer_matches_the_payload_a_nest_mini_accepted() {
+        let offer = StreamOffer { ssrc: 883259073, aes_key: [0xAC; 16], aes_iv_mask: [0xA0; 16] };
+        let expected = json!({
+            "type": "OFFER",
+            "seqNum": 2,
+            "offer": {
+                "castMode": "mirroring",
+                "supportedStreams": [{
+                    "index": 0,
+                    "type": "audio_source",
+                    "codecName": "opus",
+                    "codecParameter": "",
+                    "rtpProfile": "cast",
+                    "rtpPayloadType": 127,
+                    "ssrc": 883259073,
+                    "targetDelay": 0,
+                    "aesKey": "acacacacacacacacacacacacacacacac",
+                    "aesIvMask": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+                    "timeBase": "1/48000",
+                    "receiverRtcpEventLog": false,
+                    "bitRate": 128000,
+                    "channels": 2,
+                }],
+            },
+        });
+        assert_eq!(build_offer_payload(2, &offer), expected);
     }
 
     #[test]
