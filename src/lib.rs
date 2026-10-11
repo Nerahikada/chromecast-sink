@@ -1,3 +1,4 @@
+pub mod audio_format;
 pub mod audio_ring;
 pub mod capture;
 pub mod cast_channel;

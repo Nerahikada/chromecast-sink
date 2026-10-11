@@ -7,6 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use rand::RngCore;
 use serde_json::{json, Value};
 
+use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 use crate::cast_channel::{CastChannel, CastMessage, NS_RECEIVER, NS_WEBRTC, PLATFORM_RECEIVER_ID};
 
 /// openscreen `cast_streaming_app_ids.h`.
@@ -14,8 +15,6 @@ pub const APP_MIRRORING_AUDIO_VIDEO: &str = "0F5096E8";
 pub const APP_MIRRORING_AUDIO_ONLY: &str = "85CDB22F";
 
 pub const OPUS_CODEC: &str = "opus";
-pub const OPUS_SAMPLE_RATE: u32 = 48_000;
-pub const OPUS_CHANNELS: u32 = 2;
 pub const OPUS_BITRATE: i32 = 128_000;
 pub const RTP_PAYLOAD_TYPE: u8 = 127;
 /// `0` means 0ms, not "device default" — the default (400ms) only applies when the field is absent.
@@ -128,10 +127,10 @@ pub fn send_offer(channel: &CastChannel, incoming: &Receiver<CastMessage>, trans
                 "targetDelay": TARGET_DELAY_MS,
                 "aesKey": hex::encode(offer.aes_key),
                 "aesIvMask": hex::encode(offer.aes_iv_mask),
-                "timeBase": format!("1/{}", OPUS_SAMPLE_RATE),
+                "timeBase": format!("1/{}", SAMPLE_RATE),
                 "receiverRtcpEventLog": false,
                 "bitRate": OPUS_BITRATE,
-                "channels": OPUS_CHANNELS,
+                "channels": CHANNELS,
             }],
         },
     });

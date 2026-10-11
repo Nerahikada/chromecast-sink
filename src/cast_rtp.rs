@@ -14,8 +14,10 @@ use aes::Aes128;
 use aes::cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr128BE;
 
-/// Opus at 48 kHz with 10 ms frames = 480 samples/frame.
-pub const OPUS_SAMPLES_PER_FRAME: u32 = 480;
+use crate::audio_format::SAMPLE_RATE;
+
+/// 10 ms Opus frames.
+pub const OPUS_SAMPLES_PER_FRAME: u32 = SAMPLE_RATE / 100;
 
 const NTP_EPOCH_OFFSET_SECS: u64 = 2_208_988_800;
 

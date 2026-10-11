@@ -8,8 +8,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use pipewire::{self as pw, context::ContextRc, main_loop::MainLoopRc, properties::properties, spa, stream::{StreamFlags, StreamRc, StreamState}};
 use spa::pod::serialize::PodSerializer;
 
+use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 use crate::audio_ring::{self, RingConsumer, RingProducer};
-use crate::capture::{CHANNELS, SAMPLE_RATE};
 
 /// ~170 ms at 48 kHz; only has to absorb encoder-thread jitter.
 const RING_CAPACITY_FRAMES: usize = 8192;

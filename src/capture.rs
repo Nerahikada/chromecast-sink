@@ -4,12 +4,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
+use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 use crate::audio_ring::RingConsumer;
 use crate::cast_rtp::{CastRtpSender, OPUS_SAMPLES_PER_FRAME};
 use crate::opus_enc::OpusEncoder;
-
-pub const SAMPLE_RATE: u32 = 48_000;
-pub const CHANNELS: u8 = 2;
 
 const DRAIN_THRESHOLD_MS: usize = 30;
 const DRAIN_TARGET_MS: usize = 10;
