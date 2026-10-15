@@ -229,7 +229,7 @@ mod tests {
     fn failed_send_does_not_advance_frame_id() {
         let mut s = CastRtpSender::new(cfg()).unwrap();
         // Broadcast without SO_BROADCAST: EACCES on Linux, WSAEACCES on Windows; nothing leaves the host.
-        // (Port 0 only fails on Linux — Windows accepts and drops it.)
+        // Port 0 won't do here: Linux rejects it with EINVAL, but Windows sends the datagram anyway.
         s.dest = ("255.255.255.255".into(), 9);
 
         for _ in 0..3 {
