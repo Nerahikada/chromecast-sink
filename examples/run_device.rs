@@ -12,7 +12,7 @@ fn main() {
     let port: u16 = args.iter().find_map(|a| a.strip_prefix("--port=")).map(|p| p.parse().expect("--port must be 1..=65535")).unwrap_or(8009);
     let is_audio_only = !args.iter().any(|a| a == "--video");
     let device = Device { friendly_name: "Test Nest".into(), model: Some("Google Nest Mini".into()), host, port, is_audio_only };
-    if let Err(e) = pipeline::run_with_device(device) {
+    if let Err(e) = pipeline::run_with_device(device, #[cfg(windows)] None) {
         eprintln!("Error: {e:#}");
         std::process::exit(1);
     }

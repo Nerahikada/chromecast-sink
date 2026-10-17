@@ -35,21 +35,30 @@ pub fn local_sender_id() -> &'static str {
 }
 
 /// Matches Chromium `CreateVirtualConnectionRequest` (`cast_message_util.cc`).
-/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `platform=6` (Linux), `connectionType=1` (LAN).
+/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `connectionType=1` (LAN),
+/// `platform` as in Chromium `GetVirtualConnectPlatformValue()`: 3 (Windows) or 6 (Linux).
 fn build_connect_payload() -> Value {
-    const USER_AGENT: &str = concat!("chromecast-sink/", env!("CARGO_PKG_VERSION"), " (Linux; Rust)");
+    #[cfg(windows)]
+    const OS: &str = "Windows";
+    #[cfg(not(windows))]
+    const OS: &str = "Linux";
+    #[cfg(windows)]
+    const PLATFORM: u8 = 3;
+    #[cfg(not(windows))]
+    const PLATFORM: u8 = 6;
+    let user_agent = format!("chromecast-sink/{} ({OS}; Rust)", env!("CARGO_PKG_VERSION"));
     json!({
         "type": "CONNECT",
-        "userAgent": USER_AGENT,
+        "userAgent": user_agent,
         "connType": 0,
         "origin": {},
         "senderInfo": {
             "sdkType": 2,
             "version": env!("CARGO_PKG_VERSION"),
             "browserVersion": env!("CARGO_PKG_VERSION"),
-            "platform": 6,
+            "platform": PLATFORM,
             "connectionType": 1,
-            "systemVersion": "Linux",
+            "systemVersion": OS,
         },
     })
 }
@@ -395,6 +404,15 @@ impl ServerCertVerifier for NoVerify {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connect_payload_names_the_build_platform() {
+        let p = build_connect_payload();
+        let (platform, os) = if cfg!(windows) { (3, "Windows") } else { (6, "Linux") };
+        assert_eq!(p["senderInfo"]["platform"], platform);
+        assert_eq!(p["senderInfo"]["systemVersion"], os);
+        assert!(p["userAgent"].as_str().unwrap().ends_with(&format!("({os}; Rust)")));
+    }
 
     /// Expected hex is protoc output for openscreen's `cast_channel.proto`.
     #[test]

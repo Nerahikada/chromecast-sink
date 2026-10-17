@@ -52,7 +52,10 @@ pub fn run(ring: &mut RingConsumer, sender: &mut CastRtpSender, stop: Arc<Atomic
 
     while !stop.load(Ordering::Relaxed) {
         if ring.is_closed() {
+            #[cfg(not(windows))]
             bail!("pipewire sink stopped delivering audio");
+            #[cfg(windows)]
+            bail!("WASAPI loopback capture stopped delivering audio");
         }
         let avail = ring.available_frames();
 

@@ -3,11 +3,9 @@ use clap::Parser;
 use chromecast_sink::pipeline;
 
 #[derive(Parser)]
-#[command(
-    name = "chromecast-sink",
-    version,
-    about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."
-)]
+#[command(name = "chromecast-sink", version)]
+#[cfg_attr(not(windows), command(about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."))]
+#[cfg_attr(windows, command(about = "Use a Google Chromecast / Nest device as a Windows speaker output. Captures a playback device (default: the default playback device) via WASAPI loopback and streams it to the Chromecast."))]
 struct Cli {
     /// Connect to a specific device by name.
     #[arg(short, long, value_name = "NAME")]
@@ -21,6 +19,17 @@ struct Cli {
     #[arg(long, value_name = "PORT", default_value_t = 8009, requires = "host", conflicts_with = "device", value_parser = clap::value_parser!(u16).range(1..))]
     port: u16,
 
+    /// Windows: playback device to capture via WASAPI loopback (case-insensitive substring of its name).
+    /// Defaults to the default playback device; whatever plays there is cast.
+    #[cfg(windows)]
+    #[arg(long, value_name = "NAME")]
+    capture_device: Option<String>,
+
+    /// Windows: list playback devices usable with --capture-device and exit.
+    #[cfg(windows)]
+    #[arg(long)]
+    list_devices: bool,
+
     /// Enable verbose (debug) logging.
     #[arg(short, long)]
     verbose: bool,
@@ -32,9 +41,23 @@ fn main() {
     let level = if cli.verbose { "debug" } else { "warn" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).format_timestamp_millis().init();
 
+    #[cfg(windows)]
+    {
+        if cli.list_devices {
+            match chromecast_sink::virtual_sink::list_capture_devices() {
+                Ok(names) => names.iter().for_each(|n| println!("{n}")),
+                Err(e) => {
+                    eprintln!("Error: {e:#}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+    }
+
     let result = match cli.host {
-        Some(host) => pipeline::run_with_host(&host, cli.port),
-        None => pipeline::run(cli.device.as_deref()),
+        Some(host) => pipeline::run_with_host(&host, cli.port, #[cfg(windows)] cli.capture_device.as_deref()),
+        None => pipeline::run(cli.device.as_deref(), #[cfg(windows)] cli.capture_device.as_deref()),
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");
