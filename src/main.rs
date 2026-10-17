@@ -55,12 +55,11 @@ fn main() {
             }
             return;
         }
-        chromecast_sink::virtual_sink::set_capture_device(cli.capture_device.as_deref());
     }
 
     let result = match cli.host {
-        Some(host) => pipeline::run_with_host(&host, cli.port),
-        None => pipeline::run(cli.device.as_deref()),
+        Some(host) => pipeline::run_with_host(&host, cli.port, #[cfg(windows)] cli.capture_device.as_deref()),
+        None => pipeline::run(cli.device.as_deref(), #[cfg(windows)] cli.capture_device.as_deref()),
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");

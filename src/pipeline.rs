@@ -15,7 +15,7 @@ use crate::virtual_sink::VirtualSink;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-pub fn run(device_name: Option<&str>) -> Result<()> {
+pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
     println!("Discovering Chromecast devices...");
     let devices = discovery::discover(device_name, TIMEOUT)?;
     if devices.is_empty() {
@@ -23,13 +23,13 @@ pub fn run(device_name: Option<&str>) -> Result<()> {
     }
 
     let device = pick_device(devices)?;
-    run_with_device(device)
+    run_with_device(device, #[cfg(windows)] capture_device)
 }
 
 /// Bypasses mDNS discovery for `--host`. The host is resolved once so the control channel and RTP hit the same address. Audio-only is assumed because the `ca` bits that pick the app only come from mDNS. The sink is named after `host:port` so a group and its leader on the same IP stay distinct.
-pub fn run_with_host(host: &str, port: u16) -> Result<()> {
+pub fn run_with_host(host: &str, port: u16, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
     let ip = resolve_ipv4(host)?;
-    run_with_device(Device { friendly_name: format!("{host}:{port}"), model: None, host: ip.to_string(), port, is_audio_only: true })
+    run_with_device(Device { friendly_name: format!("{host}:{port}"), model: None, host: ip.to_string(), port, is_audio_only: true }, #[cfg(windows)] capture_device)
 }
 
 /// The RTP socket is IPv4-only and `send_to` would re-resolve a hostname on every packet, so `--host` is pinned to one IPv4 address up front.
@@ -43,7 +43,7 @@ fn resolve_ipv4(host: &str) -> Result<Ipv4Addr> {
 }
 
 /// Runs the whole session against an already-identified device: the tail of `run`, and the entry point for `--host` and the examples.
-pub fn run_with_device(device: Device) -> Result<()> {
+pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
     println!("Selected: {}", device.friendly_name);
     log::info!("Chromecast: {}:{} ({})", device.host, device.port, device.model.as_deref().unwrap_or("unknown model"));
 
@@ -55,7 +55,7 @@ pub fn run_with_device(device: Device) -> Result<()> {
     println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
     #[cfg(windows)]
     println!("Starting loopback capture...");
-    let mut sink = VirtualSink::new(&device.friendly_name)?;
+    let mut sink = VirtualSink::new(&device.friendly_name, #[cfg(windows)] capture_device)?;
 
     println!("Launching mirroring receiver...");
     let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };

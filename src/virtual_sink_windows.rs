@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -31,14 +31,6 @@ const POLL: Duration = Duration::from_millis(3);
 
 const WAVE_FORMAT_PCM: u16 = 1;
 
-static CAPTURE_DEVICE: OnceLock<Option<String>> = OnceLock::new();
-
-/// Selects the render endpoint to capture (substring of its friendly name, case-insensitive); `None` captures
-/// the default playback device. Call before `VirtualSink::new`.
-pub fn set_capture_device(name: Option<&str>) {
-    let _ = CAPTURE_DEVICE.set(name.map(str::to_string));
-}
-
 pub struct VirtualSink {
     pub sink_name: String,
     consumer: Option<RingConsumer>,
@@ -47,8 +39,8 @@ pub struct VirtualSink {
 }
 
 impl VirtualSink {
-    pub fn new(_device_name: &str) -> Result<Self> {
-        let wanted = CAPTURE_DEVICE.get().cloned().flatten();
+    pub fn new(_device_name: &str, capture_device: Option<&str>) -> Result<Self> {
+        let wanted = capture_device.map(str::to_string);
         let (producer, consumer) = audio_ring::channel(RING_CAPACITY_FRAMES, CHANNELS as usize);
         let quit = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = mpsc::channel::<Result<String>>();
