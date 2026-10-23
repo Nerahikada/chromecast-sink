@@ -35,8 +35,7 @@ pub fn local_sender_id() -> &'static str {
 }
 
 /// Matches Chromium `CreateVirtualConnectionRequest` (`cast_message_util.cc`).
-/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `connectionType=1` (LAN),
-/// `platform` as in Chromium `GetVirtualConnectPlatformValue()`: 3 (Windows) or 6 (Linux).
+/// Enum values from `cast_message_util.h`: `connType=0` (kStrong), `sdkType=2`, `connectionType=1` (LAN), `platform` as in Chromium `GetVirtualConnectPlatformValue()`: 3 (Windows) or 6 (Linux).
 fn build_connect_payload() -> Value {
     #[cfg(windows)]
     const OS: &str = "Windows";
