@@ -78,6 +78,7 @@ impl Drop for VirtualSink {
     }
 }
 
+#[allow(unsafe_code)]
 fn run_wasapi_thread(wanted: Option<String>, mut producer: RingProducer, quit: Arc<AtomicBool>, ready_tx: mpsc::Sender<Result<String>>) {
     let closer = producer.closer();
     // SAFETY: plain COM init for this thread, balanced by CoUninitialize below.
@@ -98,6 +99,7 @@ fn run_wasapi_thread(wanted: Option<String>, mut producer: RingProducer, quit: A
     log::debug!("wasapi thread exiting");
 }
 
+#[allow(unsafe_code)]
 fn capture_loop(
     wanted: Option<&str>,
     producer: &mut RingProducer,
@@ -196,12 +198,14 @@ fn pcm_format() -> WAVEFORMATEX {
     }
 }
 
+#[allow(unsafe_code)]
 fn friendly_name(dev: &IMMDevice) -> Result<String> {
     // SAFETY: COM calls on this thread's apartment.
     unsafe { Ok(dev.OpenPropertyStore(STGM_READ)?.GetValue(&PKEY_Device_FriendlyName)?.to_string()) }
 }
 
 /// The endpoint Windows plays to by default (the eConsole role, which is what Sound settings call "Output").
+#[allow(unsafe_code)]
 fn default_render_endpoint() -> Result<(IMMDevice, String)> {
     // SAFETY: COM calls on this thread's apartment.
     let dev = unsafe {
@@ -213,6 +217,7 @@ fn default_render_endpoint() -> Result<(IMMDevice, String)> {
 }
 
 /// Active render endpoints as (device, friendly name).
+#[allow(unsafe_code)]
 fn render_endpoints() -> Result<Vec<(IMMDevice, String)>> {
     // SAFETY: COM calls on this thread's apartment.
     unsafe {
@@ -252,6 +257,7 @@ fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
 }
 
 /// For `--list-devices`.
+#[allow(unsafe_code)]
 pub fn list_capture_devices() -> Result<Vec<String>> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().context("CoInitializeEx")?;
     let r = render_endpoints().map(|v| v.into_iter().map(|(_, n)| n).collect()).map_err(|e| anyhow!("{e:#}"));
