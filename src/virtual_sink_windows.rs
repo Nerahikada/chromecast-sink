@@ -254,7 +254,7 @@ fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
 /// For `--list-devices`.
 pub fn list_capture_devices() -> Result<Vec<String>> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().context("CoInitializeEx")?;
-    let r = render_endpoints().map(|v| v.into_iter().map(|(_, n)| n).collect());
+    let r = render_endpoints().map(|v| v.into_iter().map(|(_, n)| n).collect()).map_err(|e| anyhow!("{e:#}"));
     unsafe { CoUninitialize() };
     r
 }
