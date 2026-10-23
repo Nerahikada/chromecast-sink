@@ -113,8 +113,8 @@ fn capture_loop(
     let fmt = pcm_format();
 
     // SAFETY: COM calls on interfaces owned by this thread; `fmt` outlives Initialize.
+    let capture_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate capture client")?;
     unsafe {
-        let capture_client: IAudioClient = device.Activate(CLSCTX_ALL, None).context("activate capture client")?;
         capture_client
             .Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
@@ -124,13 +124,15 @@ fn capture_loop(
                 &fmt,
                 None,
             )
-            .context("initialize loopback capture (48 kHz / 16 bit / stereo)")?;
-        let capture: IAudioCaptureClient = capture_client.GetService().context("IAudioCaptureClient")?;
+    }
+    .context("initialize loopback capture (48 kHz / 16 bit / stereo)")?;
+    let capture: IAudioCaptureClient = unsafe { capture_client.GetService() }.context("IAudioCaptureClient")?;
 
-        // Loopback delivers no packets while nothing plays on the endpoint, which would stall the RTP stream
-        // (PipeWire's `node.always-process` covers this on Linux). Rendering silence into the same endpoint keeps
-        // the device clock — and therefore the packets — running.
-        let render_client: IAudioClient = device.Activate(CLSCTX_ALL, None).context("activate keep-alive client")?;
+    // Loopback delivers no packets while nothing plays on the endpoint, which would stall the RTP stream
+    // (PipeWire's `node.always-process` covers this on Linux). Rendering silence into the same endpoint keeps
+    // the device clock — and therefore the packets — running.
+    let render_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate keep-alive client")?;
+    unsafe {
         render_client
             .Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
@@ -140,48 +142,48 @@ fn capture_loop(
                 &fmt,
                 None,
             )
-            .context("initialize keep-alive render")?;
-        let render: IAudioRenderClient = render_client.GetService().context("IAudioRenderClient")?;
-        let render_frames = render_client.GetBufferSize().context("render buffer size")?;
+    }
+    .context("initialize keep-alive render")?;
+    let render: IAudioRenderClient = unsafe { render_client.GetService() }.context("IAudioRenderClient")?;
+    let render_frames = unsafe { render_client.GetBufferSize() }.context("render buffer size")?;
 
-        render_client.Start().context("start keep-alive render")?;
-        capture_client.Start().context("start loopback capture")?;
-        let _ = ready_tx.send(Ok(name));
+    unsafe { render_client.Start() }.context("start keep-alive render")?;
+    unsafe { capture_client.Start() }.context("start loopback capture")?;
+    let _ = ready_tx.send(Ok(name));
 
-        let frame_bytes = CHANNELS as usize * 2;
-        let mut silence: Vec<u8> = Vec::new();
-        while !quit.load(Ordering::Relaxed) {
-            let padding = render_client.GetCurrentPadding().context("keep-alive padding")?;
-            let free = render_frames.saturating_sub(padding);
-            if free > 0 {
-                render.GetBuffer(free).context("keep-alive buffer")?;
-                render.ReleaseBuffer(free, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32).context("keep-alive release")?;
-            }
-
-            loop {
-                let next = capture.GetNextPacketSize().context("loopback packet size")?;
-                if next == 0 {
-                    break;
-                }
-                let mut data: *mut u8 = std::ptr::null_mut();
-                let mut frames = 0u32;
-                let mut flags = 0u32;
-                capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None).context("loopback buffer")?;
-                let len = frames as usize * frame_bytes;
-                if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
-                    silence.resize(len, 0);
-                    producer.write_s16le(&silence);
-                } else {
-                    producer.write_s16le(std::slice::from_raw_parts(data, len));
-                }
-                capture.ReleaseBuffer(frames).context("loopback release")?;
-            }
-            std::thread::sleep(POLL);
+    let frame_bytes = CHANNELS as usize * 2;
+    let mut silence: Vec<u8> = Vec::new();
+    while !quit.load(Ordering::Relaxed) {
+        let padding = unsafe { render_client.GetCurrentPadding() }.context("keep-alive padding")?;
+        let free = render_frames.saturating_sub(padding);
+        if free > 0 {
+            unsafe { render.GetBuffer(free) }.context("keep-alive buffer")?;
+            unsafe { render.ReleaseBuffer(free, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) }.context("keep-alive release")?;
         }
 
-        let _ = capture_client.Stop();
-        let _ = render_client.Stop();
+        loop {
+            let next = unsafe { capture.GetNextPacketSize() }.context("loopback packet size")?;
+            if next == 0 {
+                break;
+            }
+            let mut data: *mut u8 = std::ptr::null_mut();
+            let mut frames = 0u32;
+            let mut flags = 0u32;
+            unsafe { capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }.context("loopback buffer")?;
+            let len = frames as usize * frame_bytes;
+            if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
+                silence.resize(len, 0);
+                producer.write_s16le(&silence);
+            } else {
+                producer.write_s16le(unsafe { std::slice::from_raw_parts(data, len) });
+            }
+            unsafe { capture.ReleaseBuffer(frames) }.context("loopback release")?;
+        }
+        std::thread::sleep(POLL);
     }
+
+    let _ = unsafe { capture_client.Stop() };
+    let _ = unsafe { render_client.Stop() };
     Ok(())
 }
 
@@ -208,10 +210,8 @@ fn friendly_name(dev: &IMMDevice) -> Result<String> {
 #[allow(unsafe_code)]
 fn default_render_endpoint() -> Result<(IMMDevice, String)> {
     // SAFETY: COM calls on this thread's apartment.
-    let dev = unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).context("MMDeviceEnumerator")?;
-        enumerator.GetDefaultAudioEndpoint(eRender, eConsole).context("no default playback device")?
-    };
+    let enumerator: IMMDeviceEnumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.context("MMDeviceEnumerator")?;
+    let dev = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.context("no default playback device")?;
     let name = friendly_name(&dev)?;
     Ok((dev, name))
 }
@@ -220,17 +220,15 @@ fn default_render_endpoint() -> Result<(IMMDevice, String)> {
 #[allow(unsafe_code)]
 fn render_endpoints() -> Result<Vec<(IMMDevice, String)>> {
     // SAFETY: COM calls on this thread's apartment.
-    unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).context("MMDeviceEnumerator")?;
-        let coll = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).context("EnumAudioEndpoints")?;
-        let mut out = Vec::new();
-        for i in 0..coll.GetCount()? {
-            let dev = coll.Item(i)?;
-            let name = friendly_name(&dev)?;
-            out.push((dev, name));
-        }
-        Ok(out)
+    let enumerator: IMMDeviceEnumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.context("MMDeviceEnumerator")?;
+    let coll = unsafe { enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) }.context("EnumAudioEndpoints")?;
+    let mut out = Vec::new();
+    for i in 0..unsafe { coll.GetCount() }? {
+        let dev = unsafe { coll.Item(i) }?;
+        let name = friendly_name(&dev)?;
+        out.push((dev, name));
     }
+    Ok(out)
 }
 
 fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
