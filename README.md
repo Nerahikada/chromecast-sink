@@ -37,6 +37,22 @@ chromecast-sink --host 192.168.1.20
 
 After starting, select **"Chromecast - \<device name\>"** as your audio output in Settings > Sound.
 
+## Windows
+
+Windows can't create a virtual output device from a normal app, so on Windows chromecast-sink captures an existing playback device via WASAPI loopback instead. By default it captures the default playback device, so whatever you hear locally is also cast:
+
+```powershell
+chromecast-sink.exe --list-devices                       # playback devices it can capture
+chromecast-sink.exe --device "Living Room speaker"       # casts whatever plays on the default playback device
+chromecast-sink.exe --device "Living Room speaker" --capture-device "Speakers"
+```
+
+Windows may ask for a firewall exception on the first run; mDNS discovery needs inbound UDP on private networks.
+
+**Optional: a dedicated output device.** To get a separate output you can switch to, like the Linux sink, install a virtual audio cable such as [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free, not open source), run with `--capture-device "CABLE Input"` and select **CABLE Input** as your output in Settings > Sound. Nothing plays locally on that device then.
+
+**Build**: Rust 1.85+, Visual Studio Build Tools (C++), and CMake.
+
 ## Scope
 
 chromecast-sink uses Cast Streaming to send audio over UDP with low latency.
