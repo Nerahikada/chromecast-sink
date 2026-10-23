@@ -49,3 +49,6 @@ ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
 hex-literal = "0.4"
+
+[lints.rust]
+unsafe_code = "deny"
