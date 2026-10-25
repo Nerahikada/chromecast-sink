@@ -7,11 +7,11 @@ use mdns_sd::{ServiceDaemon, ServiceEvent};
 const SERVICE: &str = "_googlecast._tcp.local.";
 
 /// `ca` TXT bitmask: bit 0 = VIDEO_OUT.
-/// Verified on a real Nest Mini (ca=198660, bit 0 clear); video Chromecasts carry e.g. ca=4101 (bit 0 set).
+/// Verified on a real Nest Mini (ca=198660, bit 0 clear). Video Chromecasts carry e.g. ca=4101 (bit 0 set).
 const CA_VIDEO_OUT: u32 = 0x01;
 
 /// Exit an untargeted browse early if no new device resolves within this window.
-/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s (service_daemon.rs:2578-2620); 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
+/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s (service_daemon.rs:2578-2620). 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
 const QUIET: Duration = Duration::from_millis(2500);
 
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ pub struct Device {
     pub friendly_name: String,
     pub model: Option<String>,
     pub host: String,
-    /// Cast v2 TCP port from mDNS. Devices use 8009; speaker groups run on the leader with a different port (e.g. 32012).
+    /// Cast v2 TCP port from mDNS. Devices use 8009. Speaker groups run on the leader with a different port (e.g. 32012).
     pub port: u16,
     pub is_audio_only: bool,
 }
@@ -34,7 +34,7 @@ impl Device {
     }
 }
 
-/// `ca` bitmask is authoritative; model-name matching is a fallback for responders that omit `ca`.
+/// `ca` bitmask is authoritative. Model-name matching is a fallback for responders that omit `ca`.
 fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
     match ca {
         Some(bits) => bits & CA_VIDEO_OUT == 0,
@@ -48,7 +48,7 @@ fn is_audio_only_model(model: &str) -> bool {
     AUDIO_ONLY.iter().any(|name| m.contains(name))
 }
 
-/// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not); otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
+/// If `wanted_name` is given, returns as soon as it's found (or after `timeout` if not). Otherwise returns after `QUIET` with no new device, or after `timeout`, whichever comes first.
 pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Device>> {
     log::debug!("mDNS: browsing {SERVICE} for up to {timeout:?}");
     let daemon = ServiceDaemon::new().context("start mdns daemon")?;
@@ -86,14 +86,14 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
             Ok(ServiceEvent::SearchStarted(s)) => log::debug!("mDNS: SearchStarted {s}"),
             Ok(ServiceEvent::SearchStopped(s)) => log::debug!("mDNS: SearchStopped {s}"),
             Err(_) => {
-                // A dead daemon returns instantly forever; falling through spins.
+                // A dead daemon returns instantly forever. Falling through spins.
                 if receiver.is_disconnected() {
                     log::warn!("mDNS daemon stopped; reporting what resolved so far");
                     break;
                 }
             }
         }
-        // Only shortcut the untargeted list case; a wanted_name miss must wait the full timeout so a slow-responding target isn't declared missing prematurely.
+        // Only shortcut the untargeted list case. A wanted_name miss must wait the full timeout to avoid declaring a slow-responding target missing prematurely.
         if wanted_name.is_none() && last_new_at.elapsed() >= QUIET {
             break;
         }

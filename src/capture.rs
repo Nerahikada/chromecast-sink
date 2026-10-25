@@ -12,11 +12,11 @@ use crate::opus_enc::OpusEncoder;
 const DRAIN_THRESHOLD_MS: usize = 30;
 const DRAIN_TARGET_MS: usize = 10;
 
-/// Headroom past the drain point, so a producer batch cannot land on the region being copied.
+/// Headroom past the drain point to keep a producer batch off the region being copied.
 const MAX_EXPECTED_QUANTUM: usize = 2048;
 
 /// Send failures self-heal (a Wi-Fi blip returns `ENETUNREACH`, then the same socket works again).
-/// Past this point RTCP has been down just as long, so the receiver has dropped the app anyway.
+/// Past this point RTCP has been down just as long and the receiver has dropped the app anyway.
 const OUTAGE_FATAL: Duration = Duration::from_secs(5);
 
 struct Outage {
@@ -39,7 +39,7 @@ pub fn run(ring: &mut RingConsumer, sender: &mut CastRtpSender, stop: Arc<Atomic
 
     let mut pcm = vec![0i16; frame_frames * CHANNELS as usize];
 
-    // The sink filled the ring all through session negotiation; not a stall.
+    // The sink filled the ring all through session negotiation, not a stall.
     ring.skip_frames(ring.available_frames());
 
     let start = Instant::now();

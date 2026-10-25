@@ -11,7 +11,7 @@ use spa::pod::serialize::PodSerializer;
 use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 use crate::audio_ring::{self, RingConsumer, RingProducer};
 
-/// ~170 ms at 48 kHz; only has to absorb encoder-thread jitter.
+/// ~170 ms at 48 kHz. Only has to absorb encoder-thread jitter.
 const RING_CAPACITY_FRAMES: usize = 8192;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,7 +35,7 @@ impl VirtualSink {
         let sink_name_c = sink_name.clone();
         let thread = std::thread::Builder::new().name("pw-sink".into()).spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx)).expect("spawn pw-sink thread");
 
-        // `channel::Sender` has no `Drop`, so a return before this leaves an orphan sink registered in PipeWire.
+        // `channel::Sender` has no `Drop`. A return before this leaves an orphan sink registered in PipeWire.
         let sink = Self { sink_name, consumer: Some(consumer), quit_tx: Some(quit_tx), thread: Some(thread) };
 
         // Bounded so a hung pipewire server can't wedge the CLI at startup.
@@ -49,7 +49,7 @@ impl VirtualSink {
         Ok(sink)
     }
 
-    /// Succeeds once; `VirtualSink` has a `Drop` so this cannot be a field move.
+    /// Succeeds once. `VirtualSink` has a `Drop`, which prevents a field move.
     pub fn take_consumer(&mut self) -> Option<RingConsumer> {
         self.consumer.take()
     }
@@ -89,7 +89,7 @@ fn enum_format_pod() -> Result<Vec<u8>> {
     info.set_format(spa::param::audio::AudioFormat::S16LE);
     info.set_rate(SAMPLE_RATE);
     info.set_channels(CHANNELS as u32);
-    // The `audio.position` property is a no-op on a stream-backed node; the channel map only takes effect here, in the format.
+    // The `audio.position` property is a no-op on a stream-backed node. The channel map only takes effect here, in the format.
     let mut position = [0u32; 64];
     position[0] = spa::sys::SPA_AUDIO_CHANNEL_FL;
     position[1] = spa::sys::SPA_AUDIO_CHANNEL_FR;
@@ -224,7 +224,7 @@ fn run_pw_thread(sink_name: String, description: String, mut producer: RingProdu
 
     mainloop.run();
 
-    // The loop can also exit on its own (`pw_loop_iterate` error); unblock the caller rather than leaving it on the readiness timeout.
+    // The loop can also exit on its own (`pw_loop_iterate` error). Unblock the caller rather than leaving it on the readiness timeout.
     if !signalled.swap(true, Ordering::Relaxed) {
         let _ = ready_tx.send(Err(anyhow!("pipewire loop exited before the sink started")));
     }

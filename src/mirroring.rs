@@ -17,7 +17,7 @@ pub const APP_MIRRORING_AUDIO_ONLY: &str = "85CDB22F";
 pub const OPUS_CODEC: &str = "opus";
 pub const OPUS_BITRATE: i32 = 128_000;
 pub const RTP_PAYLOAD_TYPE: u8 = 127;
-/// `0` means 0ms, not "device default" — the default (400ms) only applies when the field is absent.
+/// `0` means 0ms, not "device default". The default (400ms) only applies when the field is absent.
 pub const TARGET_DELAY_MS: u32 = 0;
 
 #[derive(Debug, Clone, Copy)]
@@ -57,14 +57,14 @@ pub struct StreamAnswer {
     pub send_indexes: Vec<u64>,
 }
 
-/// Owns the receiver-side app: dropping it tears the session down, so early returns between LAUNCH and shutdown still unload it.
+/// Owns the receiver-side app: dropping it tears the session down. Early returns between LAUNCH and shutdown still unload it.
 pub struct MirroringSession<'a> {
     channel: &'a CastChannel,
     pub transport_id: String,
     pub session_id: String,
 }
 
-/// STOP unloads the app; the two CLOSEs are ours — Chromium's `TerminateSession` sends STOP alone and lets both VCs die with the socket, which it keeps open.
+/// STOP unloads the app. The two CLOSEs are ours. Chromium's `TerminateSession` only sends STOP and lets both VCs die with the socket.
 impl Drop for MirroringSession<'_> {
     fn drop(&mut self) {
         if let Err(e) = send_stop(self.channel, &self.session_id) {
@@ -172,7 +172,7 @@ fn wait_for_json_message<T>(rx: &Receiver<CastMessage>, namespace: &str, deadlin
         let msg = match rx.recv_timeout(remaining.min(Duration::from_millis(500))) {
             Ok(m) => m,
             Err(RecvTimeoutError::Timeout) => continue,
-            // Returns instantly once the dispatcher is gone; `continue` spins.
+            // Returns instantly once the dispatcher is gone. `continue` would spin.
             Err(RecvTimeoutError::Disconnected) => bail!("Cast connection lost"),
         };
         if msg.namespace != namespace {

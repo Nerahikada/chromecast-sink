@@ -26,13 +26,13 @@ pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&st
     run_with_device(device, #[cfg(windows)] capture_device)
 }
 
-/// Bypasses mDNS discovery for `--host`. The host is resolved once so the control channel and RTP hit the same address. Audio-only is assumed because the `ca` bits that pick the app only come from mDNS. The sink is named after `host:port` so a group and its leader on the same IP stay distinct.
+/// Bypasses mDNS discovery for `--host`. The host is resolved once to keep the control channel and RTP on the same address. Audio-only is assumed because the `ca` bits that pick the app only come from mDNS. The sink is named after `host:port` to keep a group and its leader on the same IP distinct.
 pub fn run_with_host(host: &str, port: u16, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
     let ip = resolve_ipv4(host)?;
     run_with_device(Device { friendly_name: format!("{host}:{port}"), model: None, host: ip.to_string(), port, is_audio_only: true }, #[cfg(windows)] capture_device)
 }
 
-/// The RTP socket is IPv4-only and `send_to` would re-resolve a hostname on every packet, so `--host` is pinned to one IPv4 address up front.
+/// The RTP socket is IPv4-only and `send_to` would re-resolve a hostname on every packet. `--host` is pinned to one IPv4 address up front.
 fn resolve_ipv4(host: &str) -> Result<Ipv4Addr> {
     let addrs = (host, 0).to_socket_addrs().with_context(|| format!("resolve --host {host:?} (expected an IPv4 address or hostname; the port goes in --port)"))?;
     let mut v4 = addrs.filter_map(|a| match a.ip() {
@@ -47,7 +47,7 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     println!("Selected: {}", device.friendly_name);
     log::info!("Chromecast: {}:{} ({})", device.host, device.port, device.model.as_deref().unwrap_or("unknown model"));
 
-    // Connect before creating the sink so an unreachable device never leaves a selectable sink that swallows audio.
+    // Connect before creating the sink. An unreachable device would otherwise leave a selectable sink that swallows audio.
     println!("Connecting to Chromecast...");
     let (channel, incoming) = cast_channel::connect(&device.host, device.port)?;
 
@@ -93,7 +93,7 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
 
     let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
     let capture_result = capture::run(&mut ring, &mut sender, Arc::clone(&stop), OPUS_BITRATE);
-    // Claim the shutdown so the session monitor doesn't also report a cause.
+    // Claim the shutdown before the session monitor also reports a cause.
     if capture_result.is_err() {
         stop.store(true, Ordering::Relaxed);
     }

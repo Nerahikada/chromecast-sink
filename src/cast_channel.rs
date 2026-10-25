@@ -1,5 +1,5 @@
 //! Cast v2 channel: TLS to the port advertised over mDNS (8009 on single devices), length-prefixed CastMessage protobuf.
-//! One dispatcher thread owns the TLS stream; PINGs are auto-PONGed inline, everything else is forwarded to the caller.
+//! One dispatcher thread owns the TLS stream. PINGs are auto-PONGed inline, everything else is forwarded to the caller.
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -64,12 +64,12 @@ fn build_connect_payload() -> Value {
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
-/// Handshake needs headroom for multiple TLS round-trips; a 50ms poll here would spuriously fail on a slow network.
+/// Handshake needs headroom for multiple TLS round-trips. A 50ms poll would spuriously fail on a slow network.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// openscreen `kMaxBodySize` (`cast/common/channel/message_framer.cc`).
 const MAX_BODY_SIZE: usize = 65536;
 /// Chromium `OpenParams::liveness_timeout_in_seconds` (`cast_media_sink_service_impl.h`).
-/// Two HEARTBEAT_INTERVALs, so a single dropped PONG is not fatal.
+/// Two HEARTBEAT_INTERVALs to tolerate a single dropped PONG.
 const LIVENESS_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -117,7 +117,7 @@ impl Drop for CastChannel {
 }
 
 pub fn connect(host: &str, port: u16) -> Result<(CastChannel, Receiver<CastMessage>)> {
-    // ring provider is process-global; Err on subsequent calls is fine.
+    // ring provider is process-global. Err on subsequent calls is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mut addrs = (host, port).to_socket_addrs().with_context(|| format!("resolve {host}:{port}"))?;
@@ -165,7 +165,7 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
                 last_rx = Instant::now();
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
-            // rustls surfaces peer TCP drop without close_notify as UnexpectedEof; Chromecast never sends close_notify.
+            // rustls surfaces peer TCP drop without close_notify as UnexpectedEof. Chromecast never sends close_notify.
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 log::debug!("Cast socket closed by peer");
                 break;
@@ -188,7 +188,7 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
             match decode_cast_message(&body) {
                 Ok(msg) => {
                     if msg.namespace == NS_HEARTBEAT {
-                        // Never forward heartbeat to the caller — dispatcher-internal.
+                        // Heartbeat is dispatcher-internal, never forwarded to the caller.
                         if payload_type_is(&msg.payload, "PING") {
                             let pong = CastMessage { source: local_sender_id().into(), destination: msg.source.clone(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PONG"}"#.into() };
                             let _ = write_message(&mut tls, &pong);
@@ -201,7 +201,7 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
             }
         }
 
-        // Any write error kills the dispatcher — a partial write corrupts the length-prefix framing for everything after it.
+        // Any write error kills the dispatcher because a partial write corrupts the length-prefix framing for everything after it.
         loop {
             match outbound.try_recv() {
                 Ok(msg) => {
@@ -225,14 +225,14 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
             last_ping = Instant::now();
         }
 
-        // A dead receiver leaves TCP silently open for minutes; without this the PINGs above go unanswered forever and nothing ever reports the loss.
+        // A dead receiver leaves TCP silently open for minutes. Without this check PINGs go unanswered forever and nothing reports the loss.
         if last_rx.elapsed() >= LIVENESS_TIMEOUT {
             log::warn!("No data from Chromecast in {LIVENESS_TIMEOUT:?}; channel is dead");
             break;
         }
     }
 
-    // Flush any messages enqueued between the last loop tick and the `stop` flip in CastChannel::drop, so a graceful shutdown handshake still makes it out before TLS close_notify.
+    // Flush messages enqueued between the last loop tick and the `stop` flip in CastChannel::drop, before TLS close_notify.
     while let Ok(msg) = outbound.try_recv() {
         if let Err(e) = write_message(&mut tls, &msg) {
             log::debug!("Cast socket write error during shutdown drain: {e}");
@@ -242,7 +242,7 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
     log::debug!("Cast dispatcher exiting");
 }
 
-/// `Ok(None)` means "need more bytes"; `Err` means the framing is unrecoverable.
+/// `Ok(None)` means "need more bytes". `Err` means the framing is unrecoverable.
 fn take_frame(acc: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
     if acc.len() < 4 {
         return Ok(None);
@@ -269,7 +269,7 @@ fn write_message(tls: &mut StreamOwned<ClientConnection, TcpStream>, msg: &CastM
     Ok(())
 }
 
-// -------- CastMessage protobuf (hand-encoded — this is all we need) --------
+// -------- CastMessage protobuf (hand-encoded) --------
 //
 // message CastMessage {
 //   required ProtocolVersion protocol_version = 1;   // enum, 0 = CASTV2_1_0
@@ -297,7 +297,7 @@ fn write_string(buf: &mut Vec<u8>, tag: u32, s: &str) {
 }
 
 fn write_varint_field(buf: &mut Vec<u8>, tag: u32, v: u64) {
-    // wire_type 0 (varint) — the `| 0` is elided
+    // wire_type 0 (varint), the `| 0` is elided
     write_varint(buf, (tag as u64) << 3);
     write_varint(buf, v);
 }
@@ -357,7 +357,7 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
             }
             2 => {
                 let len = read_varint(data, &mut pos)?;
-                // Peer-supplied and free to claim u64::MAX; compared against the bytes left rather than `pos + len`, which would wrap.
+                // Peer-supplied and free to claim u64::MAX, compared against the bytes left rather than `pos + len` which would wrap.
                 if len > (data.len() - pos) as u64 {
                     bail!("length-delimited field overruns buffer");
                 }

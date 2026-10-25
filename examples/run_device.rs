@@ -1,6 +1,6 @@
 //! Usage: cargo run --example run_device --release -- 192.168.238.100 [--port=32012] [--video]
 //!
-//! `--port=` targets a speaker group on its leader's IP; `--video` marks the device as having a screen.
+//! `--port=` targets a speaker group on its leader's IP. `--video` marks the device as having a screen.
 
 use chromecast_sink::{discovery::Device, pipeline};
 

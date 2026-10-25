@@ -21,7 +21,7 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitiali
 use crate::audio_ring::{self, RingConsumer, RingProducer};
 use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 
-/// ~170 ms at 48 kHz; only has to absorb encoder-thread jitter.
+/// ~170 ms at 48 kHz. Only has to absorb encoder-thread jitter.
 const RING_CAPACITY_FRAMES: usize = 8192;
 
 /// WASAPI buffer length in 100-ns units (100 ms). Loopback latency is set by the poll interval, not by this.
@@ -58,7 +58,7 @@ impl VirtualSink {
         Ok(Self { sink_name, consumer: Some(consumer), quit, thread: Some(thread), _mta: mta })
     }
 
-    /// Succeeds once; `VirtualSink` has a `Drop` so this cannot be a field move.
+    /// Succeeds once. `VirtualSink` has a `Drop`, which prevents a field move.
     pub fn take_consumer(&mut self) -> Option<RingConsumer> {
         self.consumer.take()
     }
@@ -73,7 +73,7 @@ impl Drop for VirtualSink {
     }
 }
 
-/// This thread's membership in the multithreaded apartment; `!Send` because CoUninitialize must run on the thread that entered.
+/// This thread's membership in the multithreaded apartment. `!Send` because CoUninitialize must run on the thread that entered.
 struct Mta(PhantomData<*const ()>);
 
 impl Mta {
@@ -115,7 +115,7 @@ struct Loopback {
     render_frames: u32,
 }
 
-/// `Loopback` in a form that can cross to the pump thread; the interfaces themselves are `!Send`.
+/// `Loopback` in a form that can cross to the pump thread. The interfaces themselves are `!Send`.
 struct AgileLoopback {
     capture_client: AgileReference<IAudioClient>,
     capture: AgileReference<IAudioCaptureClient>,
@@ -155,7 +155,7 @@ fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
     };
     let fmt = pcm_format();
 
-    // SAFETY: COM calls on interfaces owned by this thread; `fmt` outlives Initialize.
+    // SAFETY: COM calls on interfaces owned by this thread. `fmt` outlives Initialize.
     let capture_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate capture client")?;
     unsafe {
         capture_client
@@ -173,7 +173,7 @@ fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
 
     // Loopback delivers no packets while nothing plays on the endpoint, which would stall the RTP stream
     // (PipeWire's `node.always-process` covers this on Linux). Rendering silence into the same endpoint keeps
-    // the device clock — and therefore the packets — running.
+    // the device clock, and therefore the packets, running.
     let render_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate keep-alive client")?;
     unsafe {
         render_client
