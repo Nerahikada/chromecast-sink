@@ -289,10 +289,7 @@ fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
         }
         0 => {
             let names: Vec<_> = all.iter().map(|(_, n)| format!("  - {n}")).collect();
-            bail!(
-                "no active playback device matches \"{wanted}\". Run with --list-devices to see the names.\nAvailable:\n{}",
-                names.join("\n")
-            )
+            bail!("no active playback device matches \"{wanted}\". Available:\n{}", names.join("\n"))
         }
         _ => {
             let names: Vec<_> = hits.iter().map(|(_, n)| format!("  - {n}")).collect();
