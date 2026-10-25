@@ -76,7 +76,7 @@ fn main() -> Result<()> {
     make_tone_wav(tone)?;
 
     println!("Creating virtual sink...");
-    let mut sink = VirtualSink::new("Test Nest")?;
+    let mut sink = VirtualSink::new("Test Nest", #[cfg(windows)] None)?;
     println!("  sink   : {}", sink.sink_name);
 
     println!("Connecting to {host}:{port}...");
