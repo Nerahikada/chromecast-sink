@@ -1,56 +1,44 @@
 [package]
 name = "chromecast-sink"
 version = "0.0.1"
+categories = ["multimedia::audio", "command-line-utilities"]
 edition = "2021"
+keywords = ["chromecast", "cast", "pipewire", "audio", "opus"]
+license = "MIT"
+repository = "https://github.com/Nerahikada/chromecast-sink"
 # Floor set by clap 4.6's edition-2024 deps; verified with `cargo +1.85.0 check`.
 rust-version = "1.85"
 description = "Use Google Chromecast / Nest as a Linux speaker output via PipeWire virtual sink"
-license = "MIT"
-repository = "https://github.com/Nerahikada/chromecast-sink"
-keywords = ["chromecast", "cast", "pipewire", "audio", "opus"]
-categories = ["multimedia::audio", "command-line-utilities"]
 
 [[bin]]
 name = "chromecast-sink"
 path = "src/main.rs"
 
 [dependencies]
-# CLI + logging
-clap = { version = "4", features = ["derive"] }
-env_logger = "0.11"
-log = "0.4"
-
-# Errors
-anyhow = "1"
-
-# Cast Streaming crypto and RTP
 aes = "0.8"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 ctr = "0.9"
-rand = "0.9"
+ctrlc = { version = "3", features = ["termination"] }
+env_logger = "0.11"
 hex = "0.4"
-
-# Cast v2 channel (TLS + length-prefixed CastMessage)
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-
-# JSON for OFFER/ANSWER (serde is pulled in transitively; we don't derive)
+log = "0.4"
+mdns-sd = "0.13"
+opus = "0.3"
+rand = "0.9"
+# serde comes in transitively and nothing here derives.
 serde_json = "1"
 
-# mDNS discovery
-mdns-sd = "0.13"
+[dependencies.rustls]
+default-features = false
+features = ["ring", "std", "tls12", "logging"]
+version = "0.23"
 
-# libopus encoder
-opus = "0.3"
-
-# Signal handling in pipeline (SIGINT + SIGTERM)
-ctrlc = { version = "3", features = ["termination"] }
-
-# pipewire-rs (virtual sink + capture in one stream)
 [target.'cfg(not(windows))'.dependencies]
 pipewire = "0.10"
 
-# WASAPI loopback capture of a (virtual) playback device
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
+[target.'cfg(windows)'.dependencies.windows]
+features = [
     "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
     "Win32_Media_Audio",
@@ -58,7 +46,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
     "Win32_UI_Shell_PropertiesSystem",
-] }
+]
+version = "0.62"
 
 [dev-dependencies]
 hex-literal = "0.4"
