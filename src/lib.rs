@@ -7,7 +7,7 @@ pub mod discovery;
 pub mod mirroring;
 pub mod opus_enc;
 pub mod pipeline;
-#[cfg(target_os = "linux")]
+#[cfg(not(windows))]
 pub mod virtual_sink;
 #[cfg(windows)]
 #[path = "virtual_sink_windows.rs"]

@@ -46,7 +46,7 @@ opus = "0.3"
 ctrlc = { version = "3", features = ["termination"] }
 
 # pipewire-rs (virtual sink + capture in one stream)
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(not(windows))'.dependencies]
 pipewire = "0.10"
 
 # WASAPI loopback capture of a (virtual) playback device
