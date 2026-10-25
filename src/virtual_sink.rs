@@ -5,7 +5,14 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use pipewire::{self as pw, context::ContextRc, main_loop::MainLoopRc, properties::properties, spa, stream::{StreamFlags, StreamRc, StreamState}};
+use pipewire::{
+    self as pw,
+    context::ContextRc,
+    main_loop::MainLoopRc,
+    properties::properties,
+    spa,
+    stream::{StreamFlags, StreamRc, StreamState},
+};
 use spa::pod::serialize::PodSerializer;
 
 use crate::audio_format::{CHANNELS, SAMPLE_RATE};
@@ -33,10 +40,18 @@ impl VirtualSink {
         let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
         let sink_name_c = sink_name.clone();
-        let thread = std::thread::Builder::new().name("pw-sink".into()).spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx)).expect("spawn pw-sink thread");
+        let thread = std::thread::Builder::new()
+            .name("pw-sink".into())
+            .spawn(move || run_pw_thread(sink_name_c, description, producer, quit_rx, ready_tx))
+            .expect("spawn pw-sink thread");
 
         // `channel::Sender` has no `Drop`. A return before this leaves an orphan sink registered in PipeWire.
-        let sink = Self { sink_name, consumer: Some(consumer), quit_tx: Some(quit_tx), thread: Some(thread) };
+        let sink = Self {
+            sink_name,
+            consumer: Some(consumer),
+            quit_tx: Some(quit_tx),
+            thread: Some(thread),
+        };
 
         // Bounded so a hung pipewire server can't wedge the CLI at startup.
         match ready_rx.recv_timeout(READY_TIMEOUT) {
@@ -95,12 +110,28 @@ fn enum_format_pod() -> Result<Vec<u8>> {
     position[1] = spa::sys::SPA_AUDIO_CHANNEL_FR;
     info.set_position(position);
 
-    let object = spa::pod::Object { type_: spa::sys::SPA_TYPE_OBJECT_Format, id: spa::sys::SPA_PARAM_EnumFormat, properties: info.into() };
-    let bytes = PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object)).context("serialize EnumFormat")?.0.into_inner();
+    let object = spa::pod::Object {
+        type_: spa::sys::SPA_TYPE_OBJECT_Format,
+        id: spa::sys::SPA_PARAM_EnumFormat,
+        properties: info.into(),
+    };
+    let bytes = PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &spa::pod::Value::Object(object),
+    )
+    .context("serialize EnumFormat")?
+    .0
+    .into_inner();
     Ok(bytes)
 }
 
-fn run_pw_thread(sink_name: String, description: String, mut producer: RingProducer, quit_rx: pw::channel::Receiver<()>, ready_tx: mpsc::Sender<Result<()>>) {
+fn run_pw_thread(
+    sink_name: String,
+    description: String,
+    mut producer: RingProducer,
+    quit_rx: pw::channel::Receiver<()>,
+    ready_tx: mpsc::Sender<Result<()>>,
+) {
     pw::init();
     let closer = producer.closer();
 
@@ -210,7 +241,12 @@ fn run_pw_thread(sink_name: String, description: String, mut producer: RingProdu
     };
 
     let mut params = [spa::pod::Pod::from_bytes(&pod).expect("EnumFormat pod is well-formed")];
-    if let Err(e) = stream.connect(spa::utils::Direction::Input, None, StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS, &mut params) {
+    if let Err(e) = stream.connect(
+        spa::utils::Direction::Input,
+        None,
+        StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
+        &mut params,
+    ) {
         let _ = ready_tx.send(Err(anyhow!("connect sink stream: {e}")));
         closer.close();
         return;
@@ -239,9 +275,15 @@ mod tests {
 
     #[test]
     fn sink_name_sanitize() {
-        assert_eq!(sanitize_sink_name("Living Room speaker"), "chromecast_sink_living_room_speaker");
+        assert_eq!(
+            sanitize_sink_name("Living Room speaker"),
+            "chromecast_sink_living_room_speaker"
+        );
         assert_eq!(sanitize_sink_name("寝室"), "chromecast_sink");
-        assert_eq!(sanitize_sink_name("Nest-Mini!"), "chromecast_sink_nest_mini");
+        assert_eq!(
+            sanitize_sink_name("Nest-Mini!"),
+            "chromecast_sink_nest_mini"
+        );
     }
 
     #[test]

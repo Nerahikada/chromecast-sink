@@ -17,7 +17,10 @@ impl OpusEncoder {
         // Paired with 10 ms frames by caller.
         let mut enc = Encoder::new(sample_rate, ch, Application::LowDelay)?;
         enc.set_bitrate(Bitrate::Bits(bit_rate))?;
-        Ok(Self { enc, out: vec![0u8; 4000] })
+        Ok(Self {
+            enc,
+            out: vec![0u8; 4000],
+        })
     }
 
     /// Encoder algorithmic delay in samples (nonzero even in LowDelay mode).

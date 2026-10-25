@@ -14,7 +14,12 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use chromecast_sink::{capture, cast_channel, cast_rtp::{self, CastRtpSender, StatsHandle}, mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE}, virtual_sink::VirtualSink};
+use chromecast_sink::{
+    capture, cast_channel,
+    cast_rtp::{self, CastRtpSender, StatsHandle},
+    mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE},
+    virtual_sink::VirtualSink,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -36,7 +41,8 @@ fn make_tone_wav(path: &str) -> Result<()> {
     let mut data: Vec<u8> = Vec::with_capacity(n as usize * 4);
     let amp = (32767.0f64 * 0.12) as i16;
     for i in 0..n {
-        let v = (amp as f64 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr as f64).sin()) as i16;
+        let v =
+            (amp as f64 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr as f64).sin()) as i16;
         data.extend_from_slice(&v.to_le_bytes());
         data.extend_from_slice(&v.to_le_bytes());
     }
@@ -63,20 +69,40 @@ fn make_tone_wav(path: &str) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).format_timestamp_millis().init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
 
     let args: Vec<String> = std::env::args().collect();
     let no_rtcp = args.iter().any(|a| a == "--no-rtcp");
-    let mode = if args.iter().any(|a| a == "--video") { StreamMode::AudioVideo } else { StreamMode::AudioOnly };
-    let port: u16 = args.iter().find_map(|a| a.strip_prefix("--port=")).map(str::parse).transpose()?.unwrap_or(8009);
-    let host = args.iter().skip(1).find(|a| !a.starts_with("--")).cloned().unwrap_or_else(|| "192.168.238.100".into());
+    let mode = if args.iter().any(|a| a == "--video") {
+        StreamMode::AudioVideo
+    } else {
+        StreamMode::AudioOnly
+    };
+    let port: u16 = args
+        .iter()
+        .find_map(|a| a.strip_prefix("--port="))
+        .map(str::parse)
+        .transpose()?
+        .unwrap_or(8009);
+    let host = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .unwrap_or_else(|| "192.168.238.100".into());
 
     let tone_path = std::env::temp_dir().join("chromecast_sink_e2e_tone.wav");
     let tone = tone_path.to_str().expect("temp path is valid UTF-8");
     make_tone_wav(tone)?;
 
     println!("Creating virtual sink...");
-    let mut sink = VirtualSink::new("Test Nest", #[cfg(windows)] None)?;
+    let mut sink = VirtualSink::new(
+        "Test Nest",
+        #[cfg(windows)]
+        None,
+    )?;
     println!("  sink   : {}", sink.sink_name);
 
     println!("Connecting to {host}:{port}...");
@@ -85,9 +111,16 @@ fn main() -> Result<()> {
     channel.connect_transport(&session.transport_id)?;
 
     let offer = StreamOffer::default();
-    let answer = mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
-    assert!(answer.send_indexes.contains(&0), "audio stream not accepted");
-    println!("ANSWER: udp_port={} send_indexes={:?}", answer.udp_port, answer.send_indexes);
+    let answer =
+        mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
+    assert!(
+        answer.send_indexes.contains(&0),
+        "audio stream not accepted"
+    );
+    println!(
+        "ANSWER: udp_port={} send_indexes={:?}",
+        answer.udp_port, answer.send_indexes
+    );
 
     let mut sender = CastRtpSender::new(cast_rtp::Config {
         chromecast_host: host.clone(),
@@ -106,7 +139,9 @@ fn main() -> Result<()> {
 
     let stop = Arc::new(AtomicBool::new(false));
     let cap_stop = Arc::clone(&stop);
-    let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
+    let mut ring = sink
+        .take_consumer()
+        .expect("ring consumer is taken exactly once");
     let cap_thread = thread::spawn(move || {
         if let Err(e) = capture::run(&mut ring, &mut sender, cap_stop, OPUS_BITRATE) {
             eprintln!("capture error: {e:#}");
@@ -118,7 +153,12 @@ fn main() -> Result<()> {
     let silence = snapshot(&stats, "silence");
 
     println!("injecting tone via pw-cat...");
-    let mut player = Command::new("pw-cat").arg("--playback").arg("--target").arg(&sink.sink_name).arg(tone).spawn()?;
+    let mut player = Command::new("pw-cat")
+        .arg("--playback")
+        .arg("--target")
+        .arg(&sink.sink_name)
+        .arg(tone)
+        .spawn()?;
     thread::sleep(Duration::from_secs(1));
     let tone_bpf = snapshot(&stats, "tone");
     let _ = player.wait();
@@ -137,7 +177,10 @@ fn main() -> Result<()> {
     let _ = cap_thread.join();
 
     let ok = silence < 20.0 && (100.0..200.0).contains(&tone_bpf);
-    println!("\nRESULT: silence={silence:.1} B/f, tone={tone_bpf:.1} B/f, after={after:.1} B/f -> {}", if ok { "PASS" } else { "FAIL" });
+    println!(
+        "\nRESULT: silence={silence:.1} B/f, tone={tone_bpf:.1} B/f, after={after:.1} B/f -> {}",
+        if ok { "PASS" } else { "FAIL" }
+    );
     anyhow::ensure!(ok, "byte rates outside the expected silence/tone ranges");
     Ok(())
 }

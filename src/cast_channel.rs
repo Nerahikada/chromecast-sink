@@ -10,11 +10,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use rand::Rng;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
-use rand::Rng;
 use serde_json::{json, Value};
 
 pub const NS_CONNECTION: &str = "urn:x-cast:com.google.cast.tp.connection";
@@ -92,7 +92,12 @@ impl CastChannel {
     }
 
     pub fn send_json(&self, destination: &str, namespace: &str, payload: &Value) -> Result<()> {
-        self.send(CastMessage { source: local_sender_id().into(), destination: destination.into(), namespace: namespace.into(), payload: payload.to_string() })
+        self.send(CastMessage {
+            source: local_sender_id().into(),
+            destination: destination.into(),
+            namespace: namespace.into(),
+            payload: payload.to_string(),
+        })
     }
 
     /// Required before sending any app message to `destination`.
@@ -103,7 +108,11 @@ impl CastChannel {
     /// Close a virtual connection.
     /// `reasonCode` signals an intentional peer close rather than an abrupt drop (Chromium `CreateVirtualConnectionClose`).
     pub fn close_transport(&self, destination: &str) -> Result<()> {
-        self.send_json(destination, NS_CONNECTION, &json!({"type": "CLOSE", "reasonCode": CLOSE_REASON_CLOSED_BY_PEER}))
+        self.send_json(
+            destination,
+            NS_CONNECTION,
+            &json!({"type": "CLOSE", "reasonCode": CLOSE_REASON_CLOSED_BY_PEER}),
+        )
     }
 }
 
@@ -120,16 +129,31 @@ pub fn connect(host: &str, port: u16) -> Result<(CastChannel, Receiver<CastMessa
     // ring provider is process-global. Err on subsequent calls is fine.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let mut addrs = (host, port).to_socket_addrs().with_context(|| format!("resolve {host}:{port}"))?;
+    let mut addrs = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve {host}:{port}"))?;
     let mut last_err = None;
-    let tcp = addrs.find_map(|addr| TcpStream::connect_timeout(&addr, HANDSHAKE_TIMEOUT).map_err(|e| last_err = Some(e)).ok());
-    let mut tcp = tcp.ok_or_else(|| last_err.unwrap_or_else(|| std::io::ErrorKind::AddrNotAvailable.into())).with_context(|| format!("TCP connect to {host}:{port}"))?;
+    let tcp = addrs.find_map(|addr| {
+        TcpStream::connect_timeout(&addr, HANDSHAKE_TIMEOUT)
+            .map_err(|e| last_err = Some(e))
+            .ok()
+    });
+    let mut tcp = tcp
+        .ok_or_else(|| last_err.unwrap_or_else(|| std::io::ErrorKind::AddrNotAvailable.into()))
+        .with_context(|| format!("TCP connect to {host}:{port}"))?;
     tcp.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))?;
 
-    let provider = CryptoProvider::get_default().expect("rustls default CryptoProvider not installed").clone();
-    let cfg = ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(provider))).with_no_client_auth();
-    let name = ServerName::try_from(host).map(|n| n.to_owned()).map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
+    let provider = CryptoProvider::get_default()
+        .expect("rustls default CryptoProvider not installed")
+        .clone();
+    let cfg = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
+        .with_no_client_auth();
+    let name = ServerName::try_from(host)
+        .map(|n| n.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid server name {host}: {e}"))?;
     let mut conn = ClientConnection::new(Arc::new(cfg), name).context("TLS client init")?;
     conn.complete_io(&mut tcp).context("TLS handshake")?;
     let mut tls = StreamOwned::new(conn, tcp);
@@ -140,15 +164,38 @@ pub fn connect(host: &str, port: u16) -> Result<(CastChannel, Receiver<CastMessa
     let (incoming_tx, incoming_rx) = mpsc::channel::<CastMessage>();
     let stop = Arc::new(AtomicBool::new(false));
 
-    write_message(&mut tls, &CastMessage { source: local_sender_id().into(), destination: PLATFORM_RECEIVER_ID.into(), namespace: NS_CONNECTION.into(), payload: build_connect_payload().to_string() })?;
+    write_message(
+        &mut tls,
+        &CastMessage {
+            source: local_sender_id().into(),
+            destination: PLATFORM_RECEIVER_ID.into(),
+            namespace: NS_CONNECTION.into(),
+            payload: build_connect_payload().to_string(),
+        },
+    )?;
 
     let stop2 = Arc::clone(&stop);
-    let thread = std::thread::Builder::new().name("cast-dispatcher".into()).spawn(move || dispatcher(tls, outbound_rx, incoming_tx, stop2)).expect("spawn dispatcher");
+    let thread = std::thread::Builder::new()
+        .name("cast-dispatcher".into())
+        .spawn(move || dispatcher(tls, outbound_rx, incoming_tx, stop2))
+        .expect("spawn dispatcher");
 
-    Ok((CastChannel { outbound: outbound_tx, stop, thread: Some(thread) }, incoming_rx))
+    Ok((
+        CastChannel {
+            outbound: outbound_tx,
+            stop,
+            thread: Some(thread),
+        },
+        incoming_rx,
+    ))
 }
 
-fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Receiver<CastMessage>, incoming: Sender<CastMessage>, stop: Arc<AtomicBool>) {
+fn dispatcher(
+    mut tls: StreamOwned<ClientConnection, TcpStream>,
+    outbound: Receiver<CastMessage>,
+    incoming: Sender<CastMessage>,
+    stop: Arc<AtomicBool>,
+) {
     let mut buf = vec![0u8; 8192];
     let mut acc: Vec<u8> = Vec::new();
     let mut last_ping = Instant::now();
@@ -164,7 +211,9 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
                 acc.extend(&buf[..n]);
                 last_rx = Instant::now();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             // rustls surfaces peer TCP drop without close_notify as UnexpectedEof. Chromecast never sends close_notify.
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 log::debug!("Cast socket closed by peer");
@@ -190,7 +239,12 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
                     if msg.namespace == NS_HEARTBEAT {
                         // Heartbeat is dispatcher-internal, never forwarded to the caller.
                         if payload_type_is(&msg.payload, "PING") {
-                            let pong = CastMessage { source: local_sender_id().into(), destination: msg.source.clone(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PONG"}"#.into() };
+                            let pong = CastMessage {
+                                source: local_sender_id().into(),
+                                destination: msg.source.clone(),
+                                namespace: NS_HEARTBEAT.into(),
+                                payload: r#"{"type":"PONG"}"#.into(),
+                            };
                             let _ = write_message(&mut tls, &pong);
                         }
                     } else {
@@ -220,7 +274,12 @@ fn dispatcher(mut tls: StreamOwned<ClientConnection, TcpStream>, outbound: Recei
         }
 
         if last_ping.elapsed() >= HEARTBEAT_INTERVAL {
-            let ping = CastMessage { source: local_sender_id().into(), destination: PLATFORM_RECEIVER_ID.into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() };
+            let ping = CastMessage {
+                source: local_sender_id().into(),
+                destination: PLATFORM_RECEIVER_ID.into(),
+                namespace: NS_HEARTBEAT.into(),
+                payload: r#"{"type":"PING"}"#.into(),
+            };
             let _ = write_message(&mut tls, &ping);
             last_ping = Instant::now();
         }
@@ -259,7 +318,10 @@ fn take_frame(acc: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
     Ok(Some(acc.drain(..len).collect()))
 }
 
-fn write_message(tls: &mut StreamOwned<ClientConnection, TcpStream>, msg: &CastMessage) -> std::io::Result<()> {
+fn write_message(
+    tls: &mut StreamOwned<ClientConnection, TcpStream>,
+    msg: &CastMessage,
+) -> std::io::Result<()> {
     let body = encode_cast_message(msg);
     let len = (body.len() as u32).to_be_bytes();
     tls.write_all(&len)?;
@@ -305,7 +367,9 @@ fn write_varint_field(buf: &mut Vec<u8>, tag: u32, v: u64) {
 /// Returns true iff `payload` parses as a JSON object with `{"type": expected}`.
 /// Used to gate hot-path behavior (heartbeat auto-PONG, session-close detection) on a real JSON parse rather than a fragile substring match.
 pub fn payload_type_is(payload: &str, expected: &str) -> bool {
-    let Ok(v) = serde_json::from_str::<Value>(payload) else { return false };
+    let Ok(v) = serde_json::from_str::<Value>(payload) else {
+        return false;
+    };
     v.get("type").and_then(|t| t.as_str()) == Some(expected)
 }
 
@@ -376,23 +440,55 @@ pub fn decode_cast_message(data: &[u8]) -> Result<CastMessage> {
         }
     }
 
-    Ok(CastMessage { source, destination, namespace, payload })
+    Ok(CastMessage {
+        source,
+        destination,
+        namespace,
+        payload,
+    })
 }
 
 #[derive(Debug)]
 struct NoVerify(Arc<CryptoProvider>);
 
 impl ServerCertVerifier for NoVerify {
-    fn verify_server_cert(&self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>], _server_name: &ServerName<'_>, _ocsp: &[u8], _now: UnixTime) -> Result<ServerCertVerified, rustls::Error> {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
     }
 
-    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
-    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -407,23 +503,40 @@ mod tests {
     #[test]
     fn connect_payload_names_the_build_platform() {
         let p = build_connect_payload();
-        let (platform, os) = if cfg!(windows) { (3, "Windows") } else { (6, "Linux") };
+        let (platform, os) = if cfg!(windows) {
+            (3, "Windows")
+        } else {
+            (6, "Linux")
+        };
         assert_eq!(p["senderInfo"]["platform"], platform);
         assert_eq!(p["senderInfo"]["systemVersion"], os);
-        assert!(p["userAgent"].as_str().unwrap().ends_with(&format!("({os}; Rust)")));
+        assert!(p["userAgent"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("({os}; Rust)")));
     }
 
     /// Expected hex is protoc output for openscreen's `cast_channel.proto`.
     #[test]
     fn encoding_matches_official_protobuf() {
-        let ping = CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() };
+        let ping = CastMessage {
+            source: "sender-0".into(),
+            destination: "receiver-0".into(),
+            namespace: NS_HEARTBEAT.into(),
+            payload: r#"{"type":"PING"}"#.into(),
+        };
         assert_eq!(
             hex::encode(encode_cast_message(&ping)),
             "0800120873656e6465722d301a0a72656365697665722d30222775726e3a782d\
              636173743a636f6d2e676f6f676c652e636173742e74702e6865617274626561\
              742800320f7b2274797065223a2250494e47227d",
         );
-        let offer = CastMessage { source: "sender-0".into(), destination: "173cb36a-a488-4fc3-963a-651334ad51c1".into(), namespace: NS_WEBRTC.into(), payload: r#"{"type":"OFFER","seqNum":1}"#.into() };
+        let offer = CastMessage {
+            source: "sender-0".into(),
+            destination: "173cb36a-a488-4fc3-963a-651334ad51c1".into(),
+            namespace: NS_WEBRTC.into(),
+            payload: r#"{"type":"OFFER","seqNum":1}"#.into(),
+        };
         assert_eq!(
             hex::encode(encode_cast_message(&offer)),
             "0800120873656e6465722d301a2431373363623336612d613438382d34666333\
@@ -435,7 +548,12 @@ mod tests {
 
     #[test]
     fn roundtrip_cast_message() {
-        let m = CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: "urn:x-cast:foo".into(), payload: r#"{"type":"PING"}"#.into() };
+        let m = CastMessage {
+            source: "sender-0".into(),
+            destination: "receiver-0".into(),
+            namespace: "urn:x-cast:foo".into(),
+            payload: r#"{"type":"PING"}"#.into(),
+        };
         let encoded = encode_cast_message(&m);
         let decoded = decode_cast_message(&encoded).unwrap();
         assert_eq!(decoded.source, m.source);
@@ -445,12 +563,24 @@ mod tests {
     }
 
     fn sample() -> CastMessage {
-        CastMessage { source: "sender-0".into(), destination: "receiver-0".into(), namespace: NS_HEARTBEAT.into(), payload: r#"{"type":"PING"}"#.into() }
+        CastMessage {
+            source: "sender-0".into(),
+            destination: "receiver-0".into(),
+            namespace: NS_HEARTBEAT.into(),
+            payload: r#"{"type":"PING"}"#.into(),
+        }
     }
 
     #[test]
     fn decode_rejects_oversized_length_delimited_field() {
-        for len in [u64::MAX, u64::MAX - 1, 1 << 63, 1 << 62, u32::MAX as u64, 17] {
+        for len in [
+            u64::MAX,
+            u64::MAX - 1,
+            1 << 63,
+            1 << 62,
+            u32::MAX as u64,
+            17,
+        ] {
             let mut data = vec![0x12]; // tag 2 (source_id), wire type 2
             write_varint(&mut data, len);
             data.extend_from_slice(b"AAAAAAAAAAAAAAAA");

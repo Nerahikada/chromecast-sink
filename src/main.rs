@@ -4,8 +4,18 @@ use chromecast_sink::pipeline;
 
 #[derive(Parser)]
 #[command(name = "chromecast-sink", version)]
-#[cfg_attr(not(windows), command(about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."))]
-#[cfg_attr(windows, command(about = "Use a Google Chromecast / Nest device as a Windows speaker output. Captures a playback device (default: the default playback device) via WASAPI loopback and streams it to the Chromecast."))]
+#[cfg_attr(
+    not(windows),
+    command(
+        about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."
+    )
+)]
+#[cfg_attr(
+    windows,
+    command(
+        about = "Use a Google Chromecast / Nest device as a Windows speaker output. Captures a playback device (default: the default playback device) via WASAPI loopback and streams it to the Chromecast."
+    )
+)]
 struct Cli {
     /// Connect to a specific device by name.
     #[arg(short, long, value_name = "NAME")]
@@ -39,7 +49,9 @@ fn main() {
     let cli = Cli::parse();
 
     let level = if cli.verbose { "debug" } else { "warn" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level)).format_timestamp_millis().init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(level))
+        .format_timestamp_millis()
+        .init();
 
     #[cfg(windows)]
     {
@@ -56,8 +68,17 @@ fn main() {
     }
 
     let result = match cli.host {
-        Some(host) => pipeline::run_with_host(&host, cli.port, #[cfg(windows)] cli.capture_device.as_deref()),
-        None => pipeline::run(cli.device.as_deref(), #[cfg(windows)] cli.capture_device.as_deref()),
+        Some(host) => pipeline::run_with_host(
+            &host,
+            cli.port,
+            #[cfg(windows)]
+            cli.capture_device.as_deref(),
+        ),
+        None => pipeline::run(
+            cli.device.as_deref(),
+            #[cfg(windows)]
+            cli.capture_device.as_deref(),
+        ),
     };
     if let Err(e) = result {
         eprintln!("Error: {e:#}");
@@ -71,10 +92,15 @@ mod tests {
 
     #[test]
     fn host_and_port_constraints() {
-        let parse = |args: &[&str]| Cli::try_parse_from(std::iter::once("chromecast-sink").chain(args.iter().copied()));
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(std::iter::once("chromecast-sink").chain(args.iter().copied()))
+        };
         assert!(parse(&[]).is_ok());
         assert!(parse(&["--device", "X"]).is_ok());
-        assert_eq!(parse(&["--host", "192.168.1.20"]).ok().map(|c| c.port), Some(8009));
+        assert_eq!(
+            parse(&["--host", "192.168.1.20"]).ok().map(|c| c.port),
+            Some(8009)
+        );
         assert!(parse(&["--port", "32012"]).is_err());
         assert!(parse(&["--device", "X", "--host", "192.168.1.20"]).is_err());
         assert!(parse(&["--device", "X", "--port", "32012"]).is_err());

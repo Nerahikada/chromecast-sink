@@ -31,7 +31,12 @@ pub fn channel(capacity_frames: usize, channels: usize) -> (RingProducer, RingCo
         read: AtomicUsize::new(0),
         closed: AtomicBool::new(false),
     });
-    (RingProducer { ring: Arc::clone(&ring) }, RingConsumer { ring })
+    (
+        RingProducer {
+            ring: Arc::clone(&ring),
+        },
+        RingConsumer { ring },
+    )
 }
 
 impl AudioRing {
@@ -72,7 +77,8 @@ impl AudioRing {
 
         let base = w.wrapping_mul(self.channels);
         for (i, s) in bytes[..frames * frame_bytes].chunks_exact(2).enumerate() {
-            self.buf[base.wrapping_add(i) & self.sample_mask].store(i16::from_le_bytes([s[0], s[1]]), Ordering::Relaxed);
+            self.buf[base.wrapping_add(i) & self.sample_mask]
+                .store(i16::from_le_bytes([s[0], s[1]]), Ordering::Relaxed);
         }
         self.write.store(end, Ordering::Release);
     }
@@ -105,7 +111,8 @@ impl AudioRing {
     fn skip_frames(&self, frames: usize) {
         let r = self.read.load(Ordering::Relaxed);
         let max = self.write.load(Ordering::Acquire).wrapping_sub(r);
-        self.read.store(r.wrapping_add(frames.min(max)), Ordering::Release);
+        self.read
+            .store(r.wrapping_add(frames.min(max)), Ordering::Release);
     }
 }
 
@@ -123,7 +130,9 @@ impl RingProducer {
     }
 
     pub fn closer(&self) -> RingCloser {
-        RingCloser { ring: Arc::clone(&self.ring) }
+        RingCloser {
+            ring: Arc::clone(&self.ring),
+        }
     }
 }
 

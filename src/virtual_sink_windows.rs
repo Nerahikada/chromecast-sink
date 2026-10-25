@@ -12,14 +12,17 @@ use anyhow::{anyhow, bail, Context, Result};
 use windows::core::AgileReference;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
-    eConsole, eRender, IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_LOOPBACK,
+    eConsole, eRender, IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice,
+    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
+    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_LOOPBACK,
     AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE_ACTIVE, WAVEFORMATEX,
 };
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
+};
 
-use crate::audio_ring::{self, RingConsumer, RingProducer};
 use crate::audio_format::{CHANNELS, SAMPLE_RATE};
+use crate::audio_ring::{self, RingConsumer, RingProducer};
 
 /// ~170 ms at 48 kHz. Only has to absorb encoder-thread jitter.
 const RING_CAPACITY_FRAMES: usize = 8192;
@@ -55,7 +58,13 @@ impl VirtualSink {
             .expect("spawn wasapi thread");
 
         log::info!("Capturing render endpoint: {sink_name}");
-        Ok(Self { sink_name, consumer: Some(consumer), quit, thread: Some(thread), _mta: mta })
+        Ok(Self {
+            sink_name,
+            consumer: Some(consumer),
+            quit,
+            thread: Some(thread),
+            _mta: mta,
+        })
     }
 
     /// Succeeds once. `VirtualSink` has a `Drop`, which prevents a field move.
@@ -80,7 +89,9 @@ impl Mta {
     #[allow(unsafe_code)]
     fn enter() -> Result<Self> {
         // SAFETY: plain COM init for this thread, balanced by CoUninitialize in Drop.
-        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().map_err(|e| anyhow!("CoInitializeEx: {e}"))?;
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+            .ok()
+            .map_err(|e| anyhow!("CoInitializeEx: {e}"))?;
         Ok(Self(PhantomData))
     }
 }
@@ -98,7 +109,10 @@ fn run_wasapi_thread(agile: AgileLoopback, mut producer: RingProducer, quit: Arc
     match Mta::enter() {
         Err(e) => log::error!("WASAPI capture failed: {e:#}"),
         Ok(_mta) => {
-            if let Err(e) = agile.resolve().and_then(|lb| pump_capture(lb, &mut producer, &quit)) {
+            if let Err(e) = agile
+                .resolve()
+                .and_then(|lb| pump_capture(lb, &mut producer, &quit))
+            {
                 log::error!("WASAPI capture failed: {e:#}");
             }
         }
@@ -156,48 +170,67 @@ fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
     let fmt = pcm_format();
 
     // SAFETY: COM calls on interfaces owned by this thread. `fmt` outlives Initialize.
-    let capture_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate capture client")?;
+    let capture_client: IAudioClient =
+        unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate capture client")?;
     unsafe {
-        capture_client
-            .Initialize(
-                AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                BUFFER_HNS,
-                0,
-                &fmt,
-                None,
-            )
+        capture_client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_LOOPBACK
+                | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            BUFFER_HNS,
+            0,
+            &fmt,
+            None,
+        )
     }
     .context("initialize loopback capture (48 kHz / 16 bit / stereo)")?;
-    let capture: IAudioCaptureClient = unsafe { capture_client.GetService() }.context("IAudioCaptureClient")?;
+    let capture: IAudioCaptureClient =
+        unsafe { capture_client.GetService() }.context("IAudioCaptureClient")?;
 
     // Loopback delivers no packets while nothing plays on the endpoint, which would stall the RTP stream
     // (PipeWire's `node.always-process` covers this on Linux). Rendering silence into the same endpoint keeps
     // the device clock, and therefore the packets, running.
-    let render_client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate keep-alive client")?;
+    let render_client: IAudioClient =
+        unsafe { device.Activate(CLSCTX_ALL, None) }.context("activate keep-alive client")?;
     unsafe {
-        render_client
-            .Initialize(
-                AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                BUFFER_HNS,
-                0,
-                &fmt,
-                None,
-            )
+        render_client.Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+            BUFFER_HNS,
+            0,
+            &fmt,
+            None,
+        )
     }
     .context("initialize keep-alive render")?;
-    let render: IAudioRenderClient = unsafe { render_client.GetService() }.context("IAudioRenderClient")?;
+    let render: IAudioRenderClient =
+        unsafe { render_client.GetService() }.context("IAudioRenderClient")?;
     let render_frames = unsafe { render_client.GetBufferSize() }.context("render buffer size")?;
 
     unsafe { render_client.Start() }.context("start keep-alive render")?;
     unsafe { capture_client.Start() }.context("start loopback capture")?;
-    Ok((Loopback { capture_client, capture, render_client, render, render_frames }, name))
+    Ok((
+        Loopback {
+            capture_client,
+            capture,
+            render_client,
+            render,
+            render_frames,
+        },
+        name,
+    ))
 }
 
 #[allow(unsafe_code)]
 fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) -> Result<()> {
-    let Loopback { capture_client, capture, render_client, render, render_frames } = lb;
+    let Loopback {
+        capture_client,
+        capture,
+        render_client,
+        render,
+        render_frames,
+    } = lb;
     let frame_bytes = CHANNELS as usize * 2;
     let mut silence: Vec<u8> = Vec::new();
     while !quit.load(Ordering::Relaxed) {
@@ -205,7 +238,8 @@ fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) ->
         let free = render_frames.saturating_sub(padding);
         if free > 0 {
             unsafe { render.GetBuffer(free) }.context("keep-alive buffer")?;
-            unsafe { render.ReleaseBuffer(free, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) }.context("keep-alive release")?;
+            unsafe { render.ReleaseBuffer(free, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) }
+                .context("keep-alive release")?;
         }
 
         loop {
@@ -216,7 +250,8 @@ fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) ->
             let mut data: *mut u8 = std::ptr::null_mut();
             let mut frames = 0u32;
             let mut flags = 0u32;
-            unsafe { capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }.context("loopback buffer")?;
+            unsafe { capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }
+                .context("loopback buffer")?;
             let len = frames as usize * frame_bytes;
             if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
                 silence.resize(len, 0);
@@ -250,15 +285,23 @@ fn pcm_format() -> WAVEFORMATEX {
 #[allow(unsafe_code)]
 fn friendly_name(dev: &IMMDevice) -> Result<String> {
     // SAFETY: COM calls on this thread's apartment.
-    unsafe { Ok(dev.OpenPropertyStore(STGM_READ)?.GetValue(&PKEY_Device_FriendlyName)?.to_string()) }
+    unsafe {
+        Ok(dev
+            .OpenPropertyStore(STGM_READ)?
+            .GetValue(&PKEY_Device_FriendlyName)?
+            .to_string())
+    }
 }
 
 /// The endpoint Windows plays to by default (the eConsole role, which is what Sound settings call "Output").
 #[allow(unsafe_code)]
 fn default_render_endpoint() -> Result<(IMMDevice, String)> {
     // SAFETY: COM calls on this thread's apartment.
-    let enumerator: IMMDeviceEnumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.context("MMDeviceEnumerator")?;
-    let dev = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.context("no default playback device")?;
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+            .context("MMDeviceEnumerator")?;
+    let dev = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+        .context("no default playback device")?;
     let name = friendly_name(&dev)?;
     Ok((dev, name))
 }
@@ -267,8 +310,11 @@ fn default_render_endpoint() -> Result<(IMMDevice, String)> {
 #[allow(unsafe_code)]
 fn render_endpoints() -> Result<Vec<(IMMDevice, String)>> {
     // SAFETY: COM calls on this thread's apartment.
-    let enumerator: IMMDeviceEnumerator = unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.context("MMDeviceEnumerator")?;
-    let coll = unsafe { enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) }.context("EnumAudioEndpoints")?;
+    let enumerator: IMMDeviceEnumerator =
+        unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+            .context("MMDeviceEnumerator")?;
+    let coll = unsafe { enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) }
+        .context("EnumAudioEndpoints")?;
     let mut out = Vec::new();
     for i in 0..unsafe { coll.GetCount() }? {
         let dev = unsafe { coll.Item(i) }?;
@@ -281,7 +327,10 @@ fn render_endpoints() -> Result<Vec<(IMMDevice, String)>> {
 fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
     let all = render_endpoints()?;
     let needle = wanted.to_lowercase();
-    let mut hits: Vec<_> = all.iter().filter(|(_, n)| n.to_lowercase().contains(&needle)).collect();
+    let mut hits: Vec<_> = all
+        .iter()
+        .filter(|(_, n)| n.to_lowercase().contains(&needle))
+        .collect();
     match hits.len() {
         1 => {
             let (d, n) = hits.pop().unwrap();
@@ -289,11 +338,17 @@ fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
         }
         0 => {
             let names: Vec<_> = all.iter().map(|(_, n)| format!("  - {n}")).collect();
-            bail!("no active playback device matches \"{wanted}\". Available:\n{}", names.join("\n"))
+            bail!(
+                "no active playback device matches \"{wanted}\". Available:\n{}",
+                names.join("\n")
+            )
         }
         _ => {
             let names: Vec<_> = hits.iter().map(|(_, n)| format!("  - {n}")).collect();
-            bail!("\"{wanted}\" matches several playback devices, be more specific:\n{}", names.join("\n"))
+            bail!(
+                "\"{wanted}\" matches several playback devices, be more specific:\n{}",
+                names.join("\n")
+            )
         }
     }
 }
@@ -301,7 +356,9 @@ fn find_render_endpoint(wanted: &str) -> Result<(IMMDevice, String)> {
 /// For `--list-devices`.
 pub fn list_capture_devices() -> Result<Vec<String>> {
     let _mta = Mta::enter()?;
-    render_endpoints().map(|v| v.into_iter().map(|(_, n)| n).collect()).map_err(|e| anyhow!("{e:#}"))
+    render_endpoints()
+        .map(|v| v.into_iter().map(|(_, n)| n).collect())
+        .map_err(|e| anyhow!("{e:#}"))
 }
 
 #[cfg(test)]

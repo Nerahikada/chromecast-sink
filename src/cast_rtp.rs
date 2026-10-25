@@ -4,14 +4,14 @@
 //! SRs are *required*: without them the receiver kills the mirroring app within seconds (verified on Nest Mini).
 
 use std::net::UdpSocket;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aes::Aes128;
 use aes::cipher::{KeyIvInit, StreamCipher};
+use aes::Aes128;
 use ctr::Ctr128BE;
 
 use crate::audio_format::SAMPLE_RATE;
@@ -111,17 +111,24 @@ impl CastRtpSender {
         self.socket.send_to(&pkt, &self.dest)?;
 
         self.frame_id.store(fid.wrapping_add(1), Ordering::Relaxed);
-        self.octet_count.fetch_add(opus_frame.len() as u64, Ordering::Relaxed);
+        self.octet_count
+            .fetch_add(opus_frame.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
     #[cfg(test)]
     pub fn stats(&self) -> (u32, u64) {
-        (self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed))
+        (
+            self.frame_id.load(Ordering::Relaxed),
+            self.octet_count.load(Ordering::Relaxed),
+        )
     }
 
     pub fn stats_handle(&self) -> StatsHandle {
-        StatsHandle { frame_id: Arc::clone(&self.frame_id), octet_count: Arc::clone(&self.octet_count) }
+        StatsHandle {
+            frame_id: Arc::clone(&self.frame_id),
+            octet_count: Arc::clone(&self.octet_count),
+        }
     }
 
     /// Spawn the 500 ms RTCP SR thread.
@@ -138,18 +145,16 @@ impl CastRtpSender {
         self.rtcp_thread = Some(
             std::thread::Builder::new()
                 .name("rtcp-sender".into())
-                .spawn(move || {
-                    loop {
-                        let fid = frame_id.load(Ordering::Relaxed);
-                        let octets = octet_count.load(Ordering::Relaxed);
-                        let sr = build_rtcp_sr(ssrc, fid, octets);
-                        if let Err(e) = socket.send_to(&sr, &dest) {
-                            log::debug!("RTCP send error: {e}");
-                        }
-                        match rx.recv_timeout(Duration::from_millis(500)) {
-                            Err(RecvTimeoutError::Timeout) => continue,
-                            _ => break,
-                        }
+                .spawn(move || loop {
+                    let fid = frame_id.load(Ordering::Relaxed);
+                    let octets = octet_count.load(Ordering::Relaxed);
+                    let sr = build_rtcp_sr(ssrc, fid, octets);
+                    if let Err(e) = socket.send_to(&sr, &dest) {
+                        log::debug!("RTCP send error: {e}");
+                    }
+                    match rx.recv_timeout(Duration::from_millis(500)) {
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        _ => break,
                     }
                 })
                 .expect("spawn rtcp thread"),
@@ -162,7 +167,11 @@ impl CastRtpSender {
         if let Some(t) = self.rtcp_thread.take() {
             let _ = t.join();
         }
-        log::info!("Cast RTP sender stopped (sent {} packets, {} bytes)", self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed));
+        log::info!(
+            "Cast RTP sender stopped (sent {} packets, {} bytes)",
+            self.frame_id.load(Ordering::Relaxed),
+            self.octet_count.load(Ordering::Relaxed)
+        );
     }
 }
 
@@ -182,24 +191,30 @@ pub struct StatsHandle {
 
 impl StatsHandle {
     pub fn snapshot(&self) -> (u32, u64) {
-        (self.frame_id.load(Ordering::Relaxed), self.octet_count.load(Ordering::Relaxed))
+        (
+            self.frame_id.load(Ordering::Relaxed),
+            self.octet_count.load(Ordering::Relaxed),
+        )
     }
 }
 
 fn build_rtcp_sr(ssrc: u32, frame_id: u32, octet_count: u64) -> [u8; 28] {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     build_rtcp_sr_at(ssrc, frame_id, octet_count, now)
 }
 
 fn build_rtcp_sr_at(ssrc: u32, frame_id: u32, octet_count: u64, now: Duration) -> [u8; 28] {
     let ntp_sec = (now.as_secs() + NTP_EPOCH_OFFSET_SECS) as u32;
-    let ntp_frac = ((now.subsec_nanos() as u64 * (1u64 << 32) / 1_000_000_000) & 0xFFFF_FFFF) as u32;
+    let ntp_frac =
+        ((now.subsec_nanos() as u64 * (1u64 << 32) / 1_000_000_000) & 0xFFFF_FFFF) as u32;
     let rtp_ts = frame_id.wrapping_mul(OPUS_SAMPLES_PER_FRAME);
 
     let mut buf = [0u8; 28];
-    buf[0] = 0x80;                                    // V=2, P=0, RC=0
-    buf[1] = 200;                                     // Sender Report
-    buf[2..4].copy_from_slice(&6u16.to_be_bytes());   // length = 6 (32-bit words - 1)
+    buf[0] = 0x80; // V=2, P=0, RC=0
+    buf[1] = 200; // Sender Report
+    buf[2..4].copy_from_slice(&6u16.to_be_bytes()); // length = 6 (32-bit words - 1)
     buf[4..8].copy_from_slice(&ssrc.to_be_bytes());
     buf[8..12].copy_from_slice(&ntp_sec.to_be_bytes());
     buf[12..16].copy_from_slice(&ntp_frac.to_be_bytes());
@@ -276,22 +291,40 @@ mod tests {
             (256, "da4c3a84b5565c4161b5d95ebcffa2d4"),
             (0x1234_5678, "747b8dae4bc012851ec33fba1e6b8ea3"),
         ] {
-            assert_eq!(hex::encode(s.encrypt(payload, fid)), expected, "frame_id={fid}");
+            assert_eq!(
+                hex::encode(s.encrypt(payload, fid)),
+                expected,
+                "frame_id={fid}"
+            );
         }
     }
 
     #[test]
     fn packet_matches_openscreen_layout() {
         let s = CastRtpSender::new(diff_cfg()).unwrap();
-        assert_eq!(hex::encode(s.build_packet(b"payload", 5)), "80ff000500000960deadbeefc00500000000057061796c6f6164");
+        assert_eq!(
+            hex::encode(s.build_packet(b"payload", 5)),
+            "80ff000500000960deadbeefc00500000000057061796c6f6164"
+        );
         // frame_id > 255: both offset 13 and offset 18 truncate to low 8 bits.
-        assert_eq!(hex::encode(s.build_packet(b"xy", 300)), "80ff012c00023280deadbeefc02c000000002c7879");
+        assert_eq!(
+            hex::encode(s.build_packet(b"xy", 300)),
+            "80ff012c00023280deadbeefc02c000000002c7879"
+        );
     }
 
     #[test]
     fn rtcp_sr_matches_reference_vector() {
-        let sr = build_rtcp_sr_at(0xDEAD_BEEF, 12345, 987_654, Duration::new(1_234_567_890, 500_000_000));
-        assert_eq!(hex::encode(sr), "80c80006deadbeefcd40815280000000005a6ae000003039000f1206");
+        let sr = build_rtcp_sr_at(
+            0xDEAD_BEEF,
+            12345,
+            987_654,
+            Duration::new(1_234_567_890, 500_000_000),
+        );
+        assert_eq!(
+            hex::encode(sr),
+            "80c80006deadbeefcd40815280000000005a6ae000003039000f1206"
+        );
         // The wall-clock wrapper may only differ in the NTP timestamp (bytes 8..16).
         let live = build_rtcp_sr(0xDEAD_BEEF, 12345, 987_654);
         assert_eq!(live[..8], sr[..8]);

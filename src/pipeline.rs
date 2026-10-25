@@ -10,7 +10,9 @@ use crate::capture;
 use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION};
 use crate::cast_rtp::{self, CastRtpSender};
 use crate::discovery::{self, Device};
-use crate::mirroring::{self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS};
+use crate::mirroring::{
+    self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS,
+};
 use crate::virtual_sink::VirtualSink;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -23,13 +25,31 @@ pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&st
     }
 
     let device = pick_device(devices)?;
-    run_with_device(device, #[cfg(windows)] capture_device)
+    run_with_device(
+        device,
+        #[cfg(windows)]
+        capture_device,
+    )
 }
 
 /// Bypasses mDNS discovery for `--host`. The host is resolved once to keep the control channel and RTP on the same address. Audio-only is assumed because the `ca` bits that pick the app only come from mDNS. The sink is named after `host:port` to keep a group and its leader on the same IP distinct.
-pub fn run_with_host(host: &str, port: u16, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
+pub fn run_with_host(
+    host: &str,
+    port: u16,
+    #[cfg(windows)] capture_device: Option<&str>,
+) -> Result<()> {
     let ip = resolve_ipv4(host)?;
-    run_with_device(Device { friendly_name: format!("{host}:{port}"), model: None, host: ip.to_string(), port, is_audio_only: true }, #[cfg(windows)] capture_device)
+    run_with_device(
+        Device {
+            friendly_name: format!("{host}:{port}"),
+            model: None,
+            host: ip.to_string(),
+            port,
+            is_audio_only: true,
+        },
+        #[cfg(windows)]
+        capture_device,
+    )
 }
 
 /// The RTP socket is IPv4-only and `send_to` would re-resolve a hostname on every packet. `--host` is pinned to one IPv4 address up front.
@@ -39,34 +59,59 @@ fn resolve_ipv4(host: &str) -> Result<Ipv4Addr> {
         IpAddr::V4(ip) => Some(ip),
         IpAddr::V6(_) => None,
     });
-    v4.next().with_context(|| format!("--host {host:?} has no IPv4 address"))
+    v4.next()
+        .with_context(|| format!("--host {host:?} has no IPv4 address"))
 }
 
 /// Runs the whole session against an already-identified device: the tail of `run`, and the entry point for `--host` and the examples.
 pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
     println!("Selected: {}", device.friendly_name);
-    log::info!("Chromecast: {}:{} ({})", device.host, device.port, device.model.as_deref().unwrap_or("unknown model"));
+    log::info!(
+        "Chromecast: {}:{} ({})",
+        device.host,
+        device.port,
+        device.model.as_deref().unwrap_or("unknown model")
+    );
 
     // Connect before creating the sink. An unreachable device would otherwise leave a selectable sink that swallows audio.
     println!("Connecting to Chromecast...");
     let (channel, incoming) = cast_channel::connect(&device.host, device.port)?;
 
     #[cfg(not(windows))]
-    println!("Creating virtual sink \"Chromecast - {}\"...", device.friendly_name);
+    println!(
+        "Creating virtual sink \"Chromecast - {}\"...",
+        device.friendly_name
+    );
     #[cfg(windows)]
     println!("Starting loopback capture...");
-    let mut sink = VirtualSink::new(&device.friendly_name, #[cfg(windows)] capture_device)?;
+    let mut sink = VirtualSink::new(
+        &device.friendly_name,
+        #[cfg(windows)]
+        capture_device,
+    )?;
 
     println!("Launching mirroring receiver...");
-    let mode = if device.is_audio_only { StreamMode::AudioOnly } else { StreamMode::AudioVideo };
+    let mode = if device.is_audio_only {
+        StreamMode::AudioOnly
+    } else {
+        StreamMode::AudioVideo
+    };
     let session = mirroring::launch_mirroring(&channel, &incoming, mode, TIMEOUT)?;
     channel.connect_transport(&session.transport_id)?;
 
     let offer = StreamOffer::default();
-    println!("Negotiating stream (Opus {}kbps, target delay {}ms)...", OPUS_BITRATE / 1000, TARGET_DELAY_MS);
-    let answer = mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
+    println!(
+        "Negotiating stream (Opus {}kbps, target delay {}ms)...",
+        OPUS_BITRATE / 1000,
+        TARGET_DELAY_MS
+    );
+    let answer =
+        mirroring::send_offer(&channel, &incoming, &session.transport_id, &offer, TIMEOUT)?;
     if !answer.send_indexes.contains(&0) {
-        bail!("Chromecast did not accept the audio stream (sendIndexes={:?})", answer.send_indexes);
+        bail!(
+            "Chromecast did not accept the audio stream (sendIndexes={:?})",
+            answer.send_indexes
+        );
     }
     log::info!("Stream negotiated: UDP port {}", answer.udp_port);
 
@@ -91,7 +136,9 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     #[cfg(windows)]
     println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nEverything played on \"{}\" is cast.\nPress Ctrl+C to stop.", device.friendly_name, sink.sink_name);
 
-    let mut ring = sink.take_consumer().expect("ring consumer is taken exactly once");
+    let mut ring = sink
+        .take_consumer()
+        .expect("ring consumer is taken exactly once");
     let capture_result = capture::run(&mut ring, &mut sender, Arc::clone(&stop), OPUS_BITRATE);
     // Claim the shutdown before the session monitor also reports a cause.
     if capture_result.is_err() {
@@ -107,14 +154,21 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     capture_result
 }
 
-fn spawn_session_monitor(incoming: Receiver<CastMessage>, transport: String, stop: Arc<AtomicBool>) -> std::thread::JoinHandle<()> {
+fn spawn_session_monitor(
+    incoming: Receiver<CastMessage>,
+    transport: String,
+    stop: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("session-monitor".into())
         .spawn(move || {
             // Default reason covers the recv-error path (dispatcher gone: our shutdown, or the TLS socket died). Overwritten if we see CLOSE.
             let mut reason = "Connection to Chromecast lost";
             while let Ok(msg) = incoming.recv() {
-                if msg.namespace == NS_CONNECTION && msg.source == transport && payload_type_is(&msg.payload, "CLOSE") {
+                if msg.namespace == NS_CONNECTION
+                    && msg.source == transport
+                    && payload_type_is(&msg.payload, "CLOSE")
+                {
                     reason = "Receiver closed the mirroring session";
                     break;
                 }
@@ -133,7 +187,11 @@ fn pick_device(mut devices: Vec<Device>) -> Result<Device> {
     }
     eprintln!("Multiple devices found:");
     for d in &devices {
-        let m = d.model.as_deref().map(|s| format!(" ({s})")).unwrap_or_default();
+        let m = d
+            .model
+            .as_deref()
+            .map(|s| format!(" ({s})"))
+            .unwrap_or_default();
         eprintln!("  - {}{m}", d.friendly_name);
     }
     eprintln!("Specify one with --device \"NAME\".");
@@ -143,7 +201,8 @@ fn pick_device(mut devices: Vec<Device>) -> Result<Device> {
 /// `ctrlc::set_handler` is only callable once per process.
 fn install_signal_handler(stop: &Arc<AtomicBool>) -> Result<()> {
     let flag = Arc::clone(stop);
-    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed)).context("install SIGINT/SIGTERM handler")
+    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
+        .context("install SIGINT/SIGTERM handler")
 }
 
 #[cfg(test)]

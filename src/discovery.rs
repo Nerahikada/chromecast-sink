@@ -30,7 +30,13 @@ impl Device {
         let model = txt.get("md").cloned();
         let ca = txt.get("ca").and_then(|v| v.parse::<u32>().ok());
         let is_audio_only = is_audio_only_device(ca, model.as_deref());
-        Some(Self { friendly_name: friendly, model, host, port, is_audio_only })
+        Some(Self {
+            friendly_name: friendly,
+            model,
+            host,
+            port,
+            is_audio_only,
+        })
     }
 }
 
@@ -43,7 +49,13 @@ fn is_audio_only_device(ca: Option<u32>, model: Option<&str>) -> bool {
 }
 
 fn is_audio_only_model(model: &str) -> bool {
-    const AUDIO_ONLY: &[&str] = &["google home", "nest mini", "nest audio", "home mini", "home max"];
+    const AUDIO_ONLY: &[&str] = &[
+        "google home",
+        "nest mini",
+        "nest audio",
+        "home mini",
+        "home max",
+    ];
     let m = model.to_ascii_lowercase();
     AUDIO_ONLY.iter().any(|name| m.contains(name))
 }
@@ -71,7 +83,8 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} port={} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), port, txt.get("fn"), txt.get("md"), txt.get("ca"));
                 let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), port, &txt) {
-                    let matched_wanted = wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
+                    let matched_wanted =
+                        wanted_name.is_some_and(|n| n.eq_ignore_ascii_case(&dev.friendly_name));
                     let is_new = devices.insert(dev.friendly_name.clone(), dev).is_none();
                     if is_new {
                         last_new_at = Instant::now();
@@ -81,7 +94,9 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                     }
                 }
             }
-            Ok(ServiceEvent::ServiceFound(_, name)) => log::debug!("mDNS: ServiceFound {name} (awaiting resolve)"),
+            Ok(ServiceEvent::ServiceFound(_, name)) => {
+                log::debug!("mDNS: ServiceFound {name} (awaiting resolve)")
+            }
             Ok(ServiceEvent::ServiceRemoved(_, name)) => log::debug!("mDNS: ServiceRemoved {name}"),
             Ok(ServiceEvent::SearchStarted(s)) => log::debug!("mDNS: SearchStarted {s}"),
             Ok(ServiceEvent::SearchStopped(s)) => log::debug!("mDNS: SearchStopped {s}"),
@@ -124,8 +139,7 @@ mod tests {
         assert!(is_audio_only_device(Some(198_660), None)); // real Nest Mini
         assert!(is_audio_only_device(Some(2052), Some("Chromecast Audio")));
         assert!(!is_audio_only_device(Some(4101), None)); // video Chromecast
-        // ca wins over a misleading model name
-        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini")));
+        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini"))); // ca wins over a misleading model name
     }
 
     #[test]
