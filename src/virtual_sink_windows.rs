@@ -2,13 +2,14 @@
 //! so this captures an existing render endpoint via WASAPI loopback: the default playback device unless
 //! `--capture-device` names another one (for example a virtual cable such as VB-Audio "CABLE Input").
 
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use windows::core::AgileReference;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
@@ -23,8 +24,6 @@ use crate::audio_format::{CHANNELS, SAMPLE_RATE};
 /// ~170 ms at 48 kHz; only has to absorb encoder-thread jitter.
 const RING_CAPACITY_FRAMES: usize = 8192;
 
-const READY_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// WASAPI buffer length in 100-ns units (100 ms). Loopback latency is set by the poll interval, not by this.
 const BUFFER_HNS: i64 = 1_000_000;
 const POLL: Duration = Duration::from_millis(3);
@@ -36,31 +35,27 @@ pub struct VirtualSink {
     consumer: Option<RingConsumer>,
     quit: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    // Held until join so the pump thread's COM objects stay valid until it enters its own MTA or drops them on failure.
+    _mta: Mta,
 }
 
 impl VirtualSink {
     pub fn new(_device_name: &str, capture_device: Option<&str>) -> Result<Self> {
-        let wanted = capture_device.map(str::to_string);
+        let mta = Mta::enter()?;
+        // Flattened while COM is still initialized: a windows::core::Error holds a COM error object.
+        let (lb, sink_name) = start_capture(capture_device).map_err(|e| anyhow!("{e:#}"))?;
+        let agile = AgileLoopback::new(&lb).map_err(|e| anyhow!("{e:#}"))?;
         let (producer, consumer) = audio_ring::channel(RING_CAPACITY_FRAMES, CHANNELS as usize);
         let quit = Arc::new(AtomicBool::new(false));
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<String>>();
 
         let quit_c = Arc::clone(&quit);
         let thread = std::thread::Builder::new()
             .name("wasapi-loopback".into())
-            .spawn(move || run_wasapi_thread(wanted, producer, quit_c, ready_tx))
+            .spawn(move || run_wasapi_thread(agile, producer, quit_c))
             .expect("spawn wasapi thread");
 
-        let mut sink = Self { sink_name: String::new(), consumer: Some(consumer), quit, thread: Some(thread) };
-
-        match ready_rx.recv_timeout(READY_TIMEOUT) {
-            Ok(r) => sink.sink_name = r?,
-            Err(mpsc::RecvTimeoutError::Timeout) => bail!("WASAPI capture was not started within {}s", READY_TIMEOUT.as_secs()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => bail!("WASAPI thread died before capture was ready"),
-        }
-
-        log::info!("Capturing render endpoint: {}", sink.sink_name);
-        Ok(sink)
+        log::info!("Capturing render endpoint: {sink_name}");
+        Ok(Self { sink_name, consumer: Some(consumer), quit, thread: Some(thread), _mta: mta })
     }
 
     /// Succeeds once; `VirtualSink` has a `Drop` so this cannot be a field move.
@@ -78,34 +73,82 @@ impl Drop for VirtualSink {
     }
 }
 
-#[allow(unsafe_code)]
-fn run_wasapi_thread(wanted: Option<String>, mut producer: RingProducer, quit: Arc<AtomicBool>, ready_tx: mpsc::Sender<Result<String>>) {
-    let closer = producer.closer();
-    // SAFETY: plain COM init for this thread, balanced by CoUninitialize below.
-    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
-        let _ = ready_tx.send(Err(anyhow!("CoInitializeEx: {e}")));
-        closer.close();
-        return;
+/// This thread's membership in the multithreaded apartment; `!Send` because CoUninitialize must run on the thread that entered.
+struct Mta(PhantomData<*const ()>);
+
+impl Mta {
+    #[allow(unsafe_code)]
+    fn enter() -> Result<Self> {
+        // SAFETY: plain COM init for this thread, balanced by CoUninitialize in Drop.
+        unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok().map_err(|e| anyhow!("CoInitializeEx: {e}"))?;
+        Ok(Self(PhantomData))
     }
-    let result = capture_loop(wanted.as_deref(), &mut producer, &quit, &ready_tx);
-    if let Err(e) = result {
-        // Fails the caller if it is still waiting, otherwise only logs; either way the encoder sees a closed ring.
-        if ready_tx.send(Err(anyhow!("{e:#}"))).is_err() || !quit.load(Ordering::Relaxed) {
-            log::error!("WASAPI capture failed: {e:#}");
+}
+
+impl Drop for Mta {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        // SAFETY: Mta is only created after CoInitializeEx succeeds, and `!Send` keeps the drop on the same thread.
+        unsafe { CoUninitialize() };
+    }
+}
+
+fn run_wasapi_thread(agile: AgileLoopback, mut producer: RingProducer, quit: Arc<AtomicBool>) {
+    let closer = producer.closer();
+    match Mta::enter() {
+        Err(e) => log::error!("WASAPI capture failed: {e:#}"),
+        Ok(_mta) => {
+            if let Err(e) = agile.resolve().and_then(|lb| pump_capture(lb, &mut producer, &quit)) {
+                log::error!("WASAPI capture failed: {e:#}");
+            }
         }
     }
     closer.close();
-    unsafe { CoUninitialize() };
     log::debug!("wasapi thread exiting");
 }
 
+struct Loopback {
+    capture_client: IAudioClient,
+    capture: IAudioCaptureClient,
+    render_client: IAudioClient,
+    render: IAudioRenderClient,
+    render_frames: u32,
+}
+
+/// `Loopback` in a form that can cross to the pump thread; the interfaces themselves are `!Send`.
+struct AgileLoopback {
+    capture_client: AgileReference<IAudioClient>,
+    capture: AgileReference<IAudioCaptureClient>,
+    render_client: AgileReference<IAudioClient>,
+    render: AgileReference<IAudioRenderClient>,
+    render_frames: u32,
+}
+
+impl AgileLoopback {
+    fn new(lb: &Loopback) -> Result<Self> {
+        Ok(Self {
+            capture_client: AgileReference::new(&lb.capture_client)?,
+            capture: AgileReference::new(&lb.capture)?,
+            render_client: AgileReference::new(&lb.render_client)?,
+            render: AgileReference::new(&lb.render)?,
+            render_frames: lb.render_frames,
+        })
+    }
+
+    /// Consumes `self` so the references are released while the caller is still in the MTA.
+    fn resolve(self) -> Result<Loopback> {
+        Ok(Loopback {
+            capture_client: self.capture_client.resolve()?,
+            capture: self.capture.resolve()?,
+            render_client: self.render_client.resolve()?,
+            render: self.render.resolve()?,
+            render_frames: self.render_frames,
+        })
+    }
+}
+
 #[allow(unsafe_code)]
-fn capture_loop(
-    wanted: Option<&str>,
-    producer: &mut RingProducer,
-    quit: &AtomicBool,
-    ready_tx: &mpsc::Sender<Result<String>>,
-) -> Result<()> {
+fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
     let (device, name) = match wanted {
         Some(w) => find_render_endpoint(w)?,
         None => default_render_endpoint()?,
@@ -149,8 +192,12 @@ fn capture_loop(
 
     unsafe { render_client.Start() }.context("start keep-alive render")?;
     unsafe { capture_client.Start() }.context("start loopback capture")?;
-    let _ = ready_tx.send(Ok(name));
+    Ok((Loopback { capture_client, capture, render_client, render, render_frames }, name))
+}
 
+#[allow(unsafe_code)]
+fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) -> Result<()> {
+    let Loopback { capture_client, capture, render_client, render, render_frames } = lb;
     let frame_bytes = CHANNELS as usize * 2;
     let mut silence: Vec<u8> = Vec::new();
     while !quit.load(Ordering::Relaxed) {
