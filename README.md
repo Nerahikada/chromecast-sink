@@ -1,57 +1,58 @@
 # chromecast-sink
 
-Use Google Chromecast / Nest devices as a Linux speaker output.
-
-## Requirements
-
-**OS**: Linux with PipeWire (tested on Ubuntu 24.04, 26.04).
-
-22.04 works too, but you'll need to switch its audio stack from PulseAudio to PipeWire first.
-
-**Build**: Rust 1.85+ and:
-
-```bash
-sudo apt install build-essential libpipewire-0.3-dev libopus-dev libclang-dev pkg-config
-```
-
-## Installation
-
-```bash
-git clone https://github.com/Nerahikada/chromecast-sink.git
-cd chromecast-sink
-cargo install --path .
-```
+Use Google Chromecast / Nest devices as speaker output.
 
 ## Usage
 
 ```bash
-# Stream to the only device found, or list them and ask for --device
+# Auto-discover and connect
 chromecast-sink
 
 # Specify device by name
 chromecast-sink --device "Living Room speaker"
 
-# Skip mDNS discovery and connect by address (audio-only receivers; --port defaults to 8009)
+# Skip mDNS, connect by address (--port defaults to 8009)
 chromecast-sink --host 192.168.1.20
 ```
 
-After starting, select **"Chromecast - \<device name\>"** as your audio output in Settings > Sound.
+On Linux, chromecast-sink creates a PipeWire virtual sink. After starting, select **"Chromecast - \<device name\>"** as your output in Settings > Sound.
 
-## Windows
+### Windows
 
-Windows can't create a virtual output device from a normal app, so on Windows chromecast-sink captures an existing playback device via WASAPI loopback instead. By default it captures the default playback device, so whatever you hear locally is also cast:
+Windows support is experimental. Basic usage is the same, but chromecast-sink captures a playback device instead of creating a virtual sink, so a few extra flags are available:
 
 ```powershell
-chromecast-sink.exe --list-devices                       # playback devices it can capture
-chromecast-sink.exe --device "Living Room speaker"       # casts whatever plays on the default playback device
-chromecast-sink.exe --device "Living Room speaker" --capture-device "Speakers"
+# List capturable playback devices
+chromecast-sink.exe --list-devices
+
+# Capture a specific playback device
+chromecast-sink.exe --capture-device "Speakers"
 ```
 
-Windows may ask for a firewall exception on the first run; mDNS discovery needs inbound UDP on private networks.
+To get a dedicated output you can switch to, like the Linux sink, install a virtual audio cable such as [VB-Audio Virtual Cable](https://vb-audio.com/Cable/), run with `--capture-device "CABLE Input"` and select **CABLE Input** as your output in Settings > Sound.
 
-**Optional: a dedicated output device.** To get a separate output you can switch to, like the Linux sink, install a virtual audio cable such as [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free, not open source), run with `--capture-device "CABLE Input"` and select **CABLE Input** as your output in Settings > Sound. Nothing plays locally on that device then.
+## Build
 
-**Build**: Rust 1.85+, Visual Studio Build Tools (C++), and CMake.
+### Linux
+
+Requires Rust 1.85+ and:
+
+```bash
+sudo apt install build-essential libpipewire-0.3-dev libopus-dev libclang-dev pkg-config
+```
+
+To build and install:
+
+```bash
+git clone https://github.com/Nerahikada/chromecast-sink.git
+cd chromecast-sink
+cargo build --release       # builds to target/release/chromecast-sink
+cargo install --path .      # or, build and install to ~/.cargo/bin/
+```
+
+### Windows
+
+Rust 1.85+, Visual Studio Build Tools (C++), and CMake.
 
 ## Scope
 
@@ -60,7 +61,3 @@ chromecast-sink uses Cast Streaming to send audio over UDP with low latency.
 It has only been tested on a Google Nest Mini, because that is the only Cast hardware the maintainer owns. Other devices and speaker groups are in scope but untested, so reports and pull requests are welcome.
 
 If you would rather have broader device compatibility and a virtual sink for every discovered device, and can live with several seconds of latency, use [p-cast](https://github.com/GenessyX/p-cast), which serves HLS segments over HTTP.
-
-## Known Limitations
-
-- **No auto-reconnect**: if the Chromecast disconnects, the tool exits cleanly — restart to reconnect
