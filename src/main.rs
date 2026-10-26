@@ -7,13 +7,13 @@ use chromecast_sink::pipeline;
 #[cfg_attr(
     not(windows),
     command(
-        about = "Use a Google Chromecast / Nest device as a Linux speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."
+        about = "Use a Google Chromecast / Nest device as speaker output. Creates a PipeWire virtual sink that streams audio to the Chromecast."
     )
 )]
 #[cfg_attr(
     windows,
     command(
-        about = "Use a Google Chromecast / Nest device as a Windows speaker output. Captures a playback device (default: the default playback device) via WASAPI loopback and streams it to the Chromecast."
+        about = "Use a Google Chromecast / Nest device as speaker output. Captures a playback device via WASAPI loopback and streams it to the Chromecast."
     )
 )]
 struct Cli {
