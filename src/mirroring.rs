@@ -89,7 +89,17 @@ pub fn launch_mirroring<'a>(
     let request_id = new_request_id();
 
     log::info!("Launching mirroring app {app_id} ({mode:?})");
-    channel.send_json(PLATFORM_RECEIVER_ID, NS_RECEIVER, &json!({"type": "LAUNCH", "requestId": request_id, "appId": app_id, "language": "en-US", "supportedAppTypes": ["WEB"]}))?;
+    channel.send_json(
+        PLATFORM_RECEIVER_ID,
+        NS_RECEIVER,
+        &json!({
+            "type": "LAUNCH",
+            "requestId": request_id,
+            "appId": app_id,
+            "language": "en-US",
+            "supportedAppTypes": ["WEB"],
+        }),
+    )?;
 
     wait_for_json_message(incoming, NS_RECEIVER, Instant::now() + timeout, |v| {
         // Filter by requestId, not app_id: a RECEIVER_STATUS broadcast may describe a leftover session from a crashed prior run (same app_id, dead transport/sessionId).
@@ -97,12 +107,33 @@ pub fn launch_mirroring<'a>(
             return None;
         }
         match v.get("type").and_then(|t| t.as_str()) {
-            Some("RECEIVER_STATUS") => v.pointer("/status/applications").and_then(|a| a.as_array()).and_then(|apps| apps.iter().find(|app| app.get("appId").and_then(|s| s.as_str()) == Some(app_id))).map(|app| {
-                let transport_id = app.get("transportId").and_then(|s| s.as_str()).ok_or_else(|| anyhow!("no transportId"))?.to_string();
-                let session_id = app.get("sessionId").and_then(|s| s.as_str()).ok_or_else(|| anyhow!("no sessionId"))?.to_string();
-                log::info!("Mirroring app {app_id} ready (transport {transport_id}, session {session_id})");
-                Ok(MirroringSession { channel, transport_id, session_id })
-            }),
+            Some("RECEIVER_STATUS") => v
+                .pointer("/status/applications")
+                .and_then(|a| a.as_array())
+                .and_then(|apps| {
+                    apps.iter()
+                        .find(|app| app.get("appId").and_then(|s| s.as_str()) == Some(app_id))
+                })
+                .map(|app| {
+                    let transport_id = app
+                        .get("transportId")
+                        .and_then(|s| s.as_str())
+                        .ok_or_else(|| anyhow!("no transportId"))?
+                        .to_string();
+                    let session_id = app
+                        .get("sessionId")
+                        .and_then(|s| s.as_str())
+                        .ok_or_else(|| anyhow!("no sessionId"))?
+                        .to_string();
+                    log::info!(
+                        "Mirroring app {app_id} ready (transport {transport_id}, session {session_id})"
+                    );
+                    Ok(MirroringSession {
+                        channel,
+                        transport_id,
+                        session_id,
+                    })
+                }),
             Some("LAUNCH_ERROR") => Some(Err(anyhow!("Receiver rejected LAUNCH: {v}"))),
             _ => None,
         }
@@ -325,7 +356,10 @@ mod tests {
 
     #[test]
     fn parse_answer_extracts_port_and_indexes() {
-        let v = serde_json::json!({"result": "ok", "answer": {"udpPort": 44321, "sendIndexes": [0], "ssrcs": [1]}});
+        let v = serde_json::json!({
+            "result": "ok",
+            "answer": {"udpPort": 44321, "sendIndexes": [0], "ssrcs": [1]},
+        });
         let a = parse_answer(&v).unwrap();
         assert_eq!(a.udp_port, 44321);
         assert_eq!(a.send_indexes, vec![0]);
@@ -344,9 +378,10 @@ mod tests {
     #[test]
     fn parse_answer_enforces_port_range() {
         let with_port = |port: u64| {
-            parse_answer(
-                &serde_json::json!({"result": "ok", "answer": {"udpPort": port, "sendIndexes": [0], "ssrcs": [1]}}),
-            )
+            parse_answer(&serde_json::json!({
+                "result": "ok",
+                "answer": {"udpPort": port, "sendIndexes": [0], "ssrcs": [1]},
+            }))
         };
         assert!(with_port(0).is_err());
         assert_eq!(with_port(65535).unwrap().udp_port, 65535);

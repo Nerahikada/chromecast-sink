@@ -21,7 +21,9 @@ pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&st
     println!("Discovering Chromecast devices...");
     let devices = discovery::discover(device_name, TIMEOUT)?;
     if devices.is_empty() {
-        bail!("No Chromecast devices found.\nCheck that your device is powered on, on the same network, and that multicast UDP 5353 is not blocked by a firewall.");
+        bail!(
+            "No Chromecast devices found.\nCheck that your device is powered on, on the same network, and that multicast UDP 5353 is not blocked by a firewall."
+        );
     }
 
     let device = pick_device(devices)?;
@@ -54,7 +56,11 @@ pub fn run_with_host(
 
 /// The RTP socket is IPv4-only and `send_to` would re-resolve a hostname on every packet. `--host` is pinned to one IPv4 address up front.
 fn resolve_ipv4(host: &str) -> Result<Ipv4Addr> {
-    let addrs = (host, 0).to_socket_addrs().with_context(|| format!("resolve --host {host:?} (expected an IPv4 address or hostname; the port goes in --port)"))?;
+    let addrs = (host, 0).to_socket_addrs().with_context(|| {
+        format!(
+            "resolve --host {host:?} (expected an IPv4 address or hostname; the port goes in --port)"
+        )
+    })?;
     let mut v4 = addrs.filter_map(|a| match a.ip() {
         IpAddr::V4(ip) => Some(ip),
         IpAddr::V6(_) => None,
@@ -132,9 +138,15 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
 
     #[cfg(not(windows))]
-    println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.", device.friendly_name, device.friendly_name);
+    println!(
+        "\nStreaming to \"{}\" via Cast Streaming (UDP).\nSelect \"Chromecast - {}\" as your audio output to start casting.\nPress Ctrl+C to stop.",
+        device.friendly_name, device.friendly_name
+    );
     #[cfg(windows)]
-    println!("\nStreaming to \"{}\" via Cast Streaming (UDP).\nEverything played on \"{}\" is cast.\nPress Ctrl+C to stop.", device.friendly_name, sink.sink_name);
+    println!(
+        "\nStreaming to \"{}\" via Cast Streaming (UDP).\nEverything played on \"{}\" is cast.\nPress Ctrl+C to stop.",
+        device.friendly_name, sink.sink_name
+    );
 
     let mut ring = sink
         .take_consumer()

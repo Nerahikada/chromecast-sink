@@ -80,7 +80,16 @@ pub fn discover(wanted_name: Option<&str>, timeout: Duration) -> Result<Vec<Devi
                 }
                 let ip = info.get_addresses_v4().iter().next().copied();
                 let port = info.get_port();
-                log::debug!("mDNS: ServiceResolved {} host={:?} addrs={:?} port={} txt={{fn={:?} md={:?} ca={:?}}}", info.get_fullname(), info.get_hostname(), info.get_addresses_v4(), port, txt.get("fn"), txt.get("md"), txt.get("ca"));
+                log::debug!(
+                    "mDNS: ServiceResolved {} host={:?} addrs={:?} port={} txt={{fn={:?} md={:?} ca={:?}}}",
+                    info.get_fullname(),
+                    info.get_hostname(),
+                    info.get_addresses_v4(),
+                    port,
+                    txt.get("fn"),
+                    txt.get("md"),
+                    txt.get("ca")
+                );
                 let Some(ip) = ip else { continue };
                 if let Some(dev) = Device::from_txt(ip.to_string(), port, &txt) {
                     let matched_wanted =
@@ -139,7 +148,9 @@ mod tests {
         assert!(is_audio_only_device(Some(198_660), None)); // real Nest Mini
         assert!(is_audio_only_device(Some(2052), Some("Chromecast Audio")));
         assert!(!is_audio_only_device(Some(4101), None)); // video Chromecast
-        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini"))); // ca wins over a misleading model name
+
+        // ca wins over a misleading model name
+        assert!(!is_audio_only_device(Some(4101), Some("Nest Mini")));
     }
 
     #[test]

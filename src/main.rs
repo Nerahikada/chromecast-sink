@@ -26,7 +26,14 @@ struct Cli {
     host: Option<String>,
 
     /// Cast v2 TCP port for --host. Single devices listen on 8009. A speaker group listens on its leader at a different port.
-    #[arg(long, value_name = "PORT", default_value_t = 8009, requires = "host", conflicts_with = "device", value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(
+        long,
+        value_name = "PORT",
+        default_value_t = 8009,
+        requires = "host",
+        conflicts_with = "device",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
     port: u16,
 
     /// Windows: playback device to capture via WASAPI loopback (case-insensitive substring of its name).

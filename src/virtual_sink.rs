@@ -56,8 +56,13 @@ impl VirtualSink {
         // Bounded so a hung pipewire server can't wedge the CLI at startup.
         match ready_rx.recv_timeout(READY_TIMEOUT) {
             Ok(r) => r?,
-            Err(mpsc::RecvTimeoutError::Timeout) => bail!("virtual sink was not started within {}s — is a session manager (wireplumber) running?", READY_TIMEOUT.as_secs()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => bail!("pipewire thread died before sink was ready"),
+            Err(mpsc::RecvTimeoutError::Timeout) => bail!(
+                "virtual sink was not started within {}s — is a session manager (wireplumber) running?",
+                READY_TIMEOUT.as_secs()
+            ),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("pipewire thread died before sink was ready")
+            }
         }
 
         log::info!("Virtual sink ready: {}", sink.sink_name);
@@ -192,7 +197,10 @@ fn run_pw_thread(
                     }
                     closer_state.close();
                 }
-                StreamState::Unconnected if signalled_c.load(Ordering::Relaxed) && !shutdown_c.load(Ordering::Relaxed) => {
+                StreamState::Unconnected
+                    if signalled_c.load(Ordering::Relaxed)
+                        && !shutdown_c.load(Ordering::Relaxed) =>
+                {
                     log::error!("sink stream was disconnected");
                     closer_state.close();
                 }
@@ -208,14 +216,24 @@ fn run_pw_thread(
             if info.parse(param).is_err() {
                 return;
             }
-            if info.format() != spa::param::audio::AudioFormat::S16LE || info.rate() != SAMPLE_RATE || info.channels() != CHANNELS as u32 {
-                log::error!("sink negotiated {:?} / {} Hz / {} ch, expected S16LE / {SAMPLE_RATE} / {CHANNELS}", info.format(), info.rate(), info.channels());
+            if info.format() != spa::param::audio::AudioFormat::S16LE
+                || info.rate() != SAMPLE_RATE
+                || info.channels() != CHANNELS as u32
+            {
+                log::error!(
+                    "sink negotiated {:?} / {} Hz / {} ch, expected S16LE / {SAMPLE_RATE} / {CHANNELS}",
+                    info.format(),
+                    info.rate(),
+                    info.channels()
+                );
             }
         })
         .process(move |stream, _| {
             // A cycle that skipped `process` leaves one permanently backed up.
             while let Some(mut buf) = stream.dequeue_buffer() {
-                let Some(data) = buf.datas_mut().first_mut() else { return };
+                let Some(data) = buf.datas_mut().first_mut() else {
+                    return;
+                };
                 let chunk_offset = data.chunk().offset() as usize;
                 let size = data.chunk().size() as usize;
                 let Some(slice) = data.data() else { return };
