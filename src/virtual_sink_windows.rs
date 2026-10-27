@@ -31,7 +31,7 @@ const RING_CAPACITY_FRAMES: usize = 8192;
 const BUFFER_HNS: i64 = 1_000_000;
 const POLL: Duration = Duration::from_millis(3);
 
-const WAVE_FORMAT_PCM: u16 = 1;
+const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
 
 pub struct VirtualSink {
     pub sink_name: String,
@@ -167,7 +167,7 @@ fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
         Some(w) => find_render_endpoint(w)?,
         None => default_render_endpoint()?,
     };
-    let fmt = pcm_format();
+    let fmt = float_format();
 
     // SAFETY: COM calls on interfaces owned by this thread. `fmt` outlives Initialize.
     let capture_client: IAudioClient =
@@ -184,7 +184,7 @@ fn start_capture(wanted: Option<&str>) -> Result<(Loopback, String)> {
             None,
         )
     }
-    .context("initialize loopback capture (48 kHz / 16 bit / stereo)")?;
+    .context("initialize loopback capture (48 kHz / f32 / stereo)")?;
     let capture: IAudioCaptureClient =
         unsafe { capture_client.GetService() }.context("IAudioCaptureClient")?;
 
@@ -231,8 +231,8 @@ fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) ->
         render,
         render_frames,
     } = lb;
-    let frame_bytes = CHANNELS as usize * 2;
-    let mut silence: Vec<u8> = Vec::new();
+    let frame_bytes = CHANNELS as usize * 4;
+    let mut s16: Vec<u8> = Vec::new();
     while !quit.load(Ordering::Relaxed) {
         let padding = unsafe { render_client.GetCurrentPadding() }.context("keep-alive padding")?;
         let free = render_frames.saturating_sub(padding);
@@ -254,11 +254,12 @@ fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) ->
                 .context("loopback buffer")?;
             let len = frames as usize * frame_bytes;
             if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
-                silence.resize(len, 0);
-                producer.write_s16le(&silence);
+                s16.clear();
+                s16.resize(len / 2, 0);
             } else {
-                producer.write_s16le(unsafe { std::slice::from_raw_parts(data, len) });
+                f32le_to_s16le(unsafe { std::slice::from_raw_parts(data, len) }, &mut s16);
             }
+            producer.write_s16le(&s16);
             unsafe { capture.ReleaseBuffer(frames) }.context("loopback release")?;
         }
         std::thread::sleep(POLL);
@@ -269,16 +270,25 @@ fn pump_capture(lb: Loopback, producer: &mut RingProducer, quit: &AtomicBool) ->
     Ok(())
 }
 
-fn pcm_format() -> WAVEFORMATEX {
-    let block_align = CHANNELS as u16 * 2;
+fn float_format() -> WAVEFORMATEX {
+    let block_align = CHANNELS as u16 * 4;
     WAVEFORMATEX {
-        wFormatTag: WAVE_FORMAT_PCM,
+        wFormatTag: WAVE_FORMAT_IEEE_FLOAT,
         nChannels: CHANNELS as u16,
         nSamplesPerSec: SAMPLE_RATE,
         nAvgBytesPerSec: SAMPLE_RATE * block_align as u32,
         nBlockAlign: block_align,
-        wBitsPerSample: 16,
+        wBitsPerSample: 32,
         cbSize: 0,
+    }
+}
+
+fn f32le_to_s16le(src: &[u8], dst: &mut Vec<u8>) {
+    dst.clear();
+    for b in src.chunks_exact(4) {
+        let x = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        let s = (x * 32768.0).round() as i16;
+        dst.extend_from_slice(&s.to_le_bytes());
     }
 }
 
@@ -366,12 +376,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pcm_format_is_48k_s16_stereo() {
-        let f = pcm_format();
+    fn float_format_is_48k_f32_stereo() {
+        let f = float_format();
+        assert_eq!({ f.wFormatTag }, 3);
         assert_eq!({ f.nSamplesPerSec }, 48_000);
-        assert_eq!({ f.wBitsPerSample }, 16);
+        assert_eq!({ f.wBitsPerSample }, 32);
         assert_eq!({ f.nChannels }, 2);
-        assert_eq!({ f.nBlockAlign }, 4);
-        assert_eq!({ f.nAvgBytesPerSec }, 192_000);
+        assert_eq!({ f.nBlockAlign }, 8);
+        assert_eq!({ f.nAvgBytesPerSec }, 384_000);
+    }
+
+    #[test]
+    fn f32_to_s16_rounds_and_saturates() {
+        let input: Vec<u8> = [
+            0.0f32,
+            -0.0,
+            0.5,
+            -1.0,
+            1.0,
+            2.0,
+            -2.0,
+            f32::NAN,
+            1.4 / 32768.0,
+        ]
+        .iter()
+        .flat_map(|x| x.to_le_bytes())
+        .collect();
+        let mut out = Vec::new();
+        f32le_to_s16le(&input, &mut out);
+        let got: Vec<i16> = out
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        assert_eq!(got, [0, 0, 16384, -32768, 32767, 32767, -32768, 0, 1]);
     }
 }
