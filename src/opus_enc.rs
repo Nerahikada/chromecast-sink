@@ -13,8 +13,7 @@ impl OpusEncoder {
             2 => Channels::Stereo,
             n => anyhow::bail!("unsupported channel count: {n}"),
         };
-        // Application::LowDelay = RESTRICTED_LOWDELAY: skips prediction/lookahead machinery Cast Streaming can't tolerate.
-        // Paired with 10 ms frames by caller.
+        // RESTRICTED_LOWDELAY minimizes algorithmic delay. Paired with 10 ms frames by caller.
         let mut enc = Encoder::new(sample_rate, ch, Application::LowDelay)?;
         enc.set_bitrate(Bitrate::Bits(bit_rate))?;
         Ok(Self {

@@ -15,8 +15,7 @@ const DRAIN_TARGET_MS: usize = 10;
 /// Headroom past the drain point to keep a producer batch off the region being copied.
 const MAX_EXPECTED_QUANTUM: usize = 2048;
 
-/// Send failures self-heal (a Wi-Fi blip returns `ENETUNREACH`, then the same socket works again).
-/// Past this point RTCP has been down just as long and the receiver has dropped the app anyway.
+/// Send failures self-heal (a Wi-Fi blip returns `ENETUNREACH`, then the same socket works again). Past this, the receiver has likely dropped the app anyway.
 const OUTAGE_FATAL: Duration = Duration::from_secs(5);
 
 struct Outage {
@@ -34,10 +33,10 @@ pub fn run(
     stop: Arc<AtomicBool>,
     bit_rate: i32,
 ) -> Result<()> {
-    let frame_frames = OPUS_SAMPLES_PER_FRAME as usize;
+    let frame_size = OPUS_SAMPLES_PER_FRAME as usize;
     let threshold = frames_for_ms(DRAIN_THRESHOLD_MS);
     let target = frames_for_ms(DRAIN_TARGET_MS);
-    assert!(threshold + frame_frames + MAX_EXPECTED_QUANTUM <= ring.capacity_frames());
+    assert!(threshold + frame_size + MAX_EXPECTED_QUANTUM <= ring.capacity_frames());
 
     let mut encoder = OpusEncoder::new(SAMPLE_RATE, CHANNELS, bit_rate)?;
     log::info!(
@@ -47,7 +46,7 @@ pub fn run(
         encoder.lookahead_samples() as f64 * 1000.0 / SAMPLE_RATE as f64
     );
 
-    let mut pcm = vec![0i16; frame_frames * CHANNELS as usize];
+    let mut pcm = vec![0i16; frame_size * CHANNELS as usize];
 
     // The sink filled the ring all through session negotiation, not a stall.
     ring.skip_frames(ring.available_frames());
@@ -80,8 +79,8 @@ pub fn run(
             continue;
         }
 
-        if avail < frame_frames {
-            let missing = (frame_frames - avail) as u64;
+        if avail < frame_size {
+            let missing = (frame_size - avail) as u64;
             let us = (missing * 1_000_000 / SAMPLE_RATE as u64).max(200);
             std::thread::sleep(Duration::from_micros(us));
             continue;

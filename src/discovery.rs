@@ -11,7 +11,7 @@ const SERVICE: &str = "_googlecast._tcp.local.";
 const CA_VIDEO_OUT: u32 = 0x01;
 
 /// Exit an untargeted browse early if no new device resolves within this window.
-/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s (service_daemon.rs:2578-2620). 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
+/// mdns-sd retransmits PTR at T=0, T=1s, T=3s, T=7s. 2.5s covers the T=1s retransmission plus Wi-Fi RTT for slow responders.
 const QUIET: Duration = Duration::from_millis(2500);
 
 #[derive(Debug, Clone)]

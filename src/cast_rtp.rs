@@ -45,7 +45,7 @@ pub struct Config {
     pub aes_iv_mask: [u8; 16],
 }
 
-/// One Opus frame is always one packet (~161 B). `frame_id` doubles as the RTP sequence number and RTCP packet count, and the RTP timestamp is `frame_id * OPUS_SAMPLES_PER_FRAME`.
+/// One Opus frame is always one packet (~161 B). The RTP sequence number is the low 16 bits of `frame_id`, and the timestamp is `frame_id * OPUS_SAMPLES_PER_FRAME`.
 pub struct CastRtpSender {
     config: Config,
     socket: Arc<UdpSocket>,
