@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tag matches Cargo.toml version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+  build-linux:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      DIST: chromecast-sink-${{ github.ref_name }}-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libopus-dev \
+            libpipewire-0.3-dev \
+            libclang-dev \
+            clang
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Build release
+        run: |
+          RUSTFLAGS="-L /usr/lib/$(gcc -print-multiarch) -l static=opus" \
+            cargo build --release --locked
+
+      - name: Verify libopus is statically linked
+        run: |
+          if ldd target/release/chromecast-sink | grep -q libopus; then
+            echo "::error::libopus is dynamically linked (expected static)"
+            ldd target/release/chromecast-sink
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          RUSTFLAGS="-L /usr/lib/$(gcc -print-multiarch) -l static=opus" \
+            cargo test --release --locked
+
+      - name: Package
+        run: |
+          mkdir "$DIST"
+          cp target/release/chromecast-sink LICENSE README.md "$DIST/"
+          tar -czf "$DIST.tar.gz" "$DIST"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DIST }}
+          path: ${{ env.DIST }}.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    needs: check-version
+    runs-on: windows-latest
+    env:
+      DIST: chromecast-sink-${{ github.ref_name }}-windows-x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Run tests
+        run: cargo test --release --locked
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory $env:DIST
+          Copy-Item target/release/chromecast-sink.exe, LICENSE, README.md $env:DIST
+          Compress-Archive -Path $env:DIST -DestinationPath "$env:DIST.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DIST }}
+          path: ${{ env.DIST }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" dist/*
