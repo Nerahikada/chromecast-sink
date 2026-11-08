@@ -25,7 +25,7 @@ hex = "0.4"
 log = "0.4"
 mdns-sd = "0.13"
 opus = "0.3"
-rand = "0.9"
+rand = "0.10"
 # serde comes in transitively and nothing here derives.
 serde_json = "1"
 

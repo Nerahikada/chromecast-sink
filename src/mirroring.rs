@@ -4,7 +4,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use rand::RngCore;
+use rand::Rng;
 use serde_json::{json, Value};
 
 use crate::audio_format::{CHANNELS, SAMPLE_RATE};
