@@ -17,6 +17,15 @@ chromecast-sink --host 192.168.1.20
 
 On Linux, chromecast-sink creates a PipeWire virtual sink. After starting, select **"Chromecast - \<device name\>"** as your output in Settings > Sound.
 
+The Linux sink volume and mute controls synchronize with the selected Cast
+receiver, while keeping sink PCM gain at unity. Receiver status can also update
+the sink, including external Google Home changes when the receiver reports
+them. Speaker-group volume depends on the group's exposed controls; individual
+member updates and partial failures cannot always be observed. See
+[volume behavior, limitations, and Bazzite/Arch Distrobox instructions](docs/volume-sync.md).
+Use `--local-volume` to retain local software-gain controls on receivers that
+do not expose usable device volume/mute status.
+
 ### Windows
 
 Windows support is experimental. Basic usage is the same, but chromecast-sink captures a playback device instead of creating a virtual sink, so a few extra flags are available:

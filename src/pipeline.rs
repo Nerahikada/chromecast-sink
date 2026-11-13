@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,16 +8,42 @@ use anyhow::{bail, Context, Result};
 
 use crate::capture;
 use crate::cast_channel::{self, payload_type_is, CastMessage, NS_CONNECTION};
+#[cfg(not(windows))]
+use crate::cast_channel::{CastSender, NS_RECEIVER, PLATFORM_RECEIVER_ID};
 use crate::cast_rtp::{self, CastRtpSender};
 use crate::discovery::{self, Device};
 use crate::mirroring::{
     self, StreamMode, StreamOffer, OPUS_BITRATE, RTP_PAYLOAD_TYPE, TARGET_DELAY_MS,
 };
 use crate::virtual_sink::VirtualSink;
+#[cfg(not(windows))]
+use crate::virtual_sink::VolumeControl;
+#[cfg(not(windows))]
+use crate::volume::{Effect, VolumeSync};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Options {
+    /// Retain local PipeWire software gain/mute and disable device volume sync.
+    #[cfg(not(windows))]
+    pub local_volume: bool,
+}
+
 pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
+    run_with_options(
+        device_name,
+        #[cfg(windows)]
+        capture_device,
+        Options::default(),
+    )
+}
+
+pub fn run_with_options(
+    device_name: Option<&str>,
+    #[cfg(windows)] capture_device: Option<&str>,
+    options: Options,
+) -> Result<()> {
     println!("Discovering Chromecast devices...");
     let devices = discovery::discover(device_name, TIMEOUT)?;
     if devices.is_empty() {
@@ -27,10 +53,11 @@ pub fn run(device_name: Option<&str>, #[cfg(windows)] capture_device: Option<&st
     }
 
     let device = pick_device(devices)?;
-    run_with_device(
+    run_with_device_options(
         device,
         #[cfg(windows)]
         capture_device,
+        options,
     )
 }
 
@@ -40,8 +67,23 @@ pub fn run_with_host(
     port: u16,
     #[cfg(windows)] capture_device: Option<&str>,
 ) -> Result<()> {
+    run_with_host_options(
+        host,
+        port,
+        #[cfg(windows)]
+        capture_device,
+        Options::default(),
+    )
+}
+
+pub fn run_with_host_options(
+    host: &str,
+    port: u16,
+    #[cfg(windows)] capture_device: Option<&str>,
+    options: Options,
+) -> Result<()> {
     let ip = resolve_ipv4(host)?;
-    run_with_device(
+    run_with_device_options(
         Device {
             friendly_name: format!("{host}:{port}"),
             model: None,
@@ -51,6 +93,7 @@ pub fn run_with_host(
         },
         #[cfg(windows)]
         capture_device,
+        options,
     )
 }
 
@@ -71,6 +114,21 @@ fn resolve_ipv4(host: &str) -> Result<Ipv4Addr> {
 
 /// Runs the whole session against an already-identified device: the tail of `run`, and the entry point for `--host` and the examples.
 pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&str>) -> Result<()> {
+    run_with_device_options(
+        device,
+        #[cfg(windows)]
+        capture_device,
+        Options::default(),
+    )
+}
+
+pub fn run_with_device_options(
+    device: Device,
+    #[cfg(windows)] capture_device: Option<&str>,
+    options: Options,
+) -> Result<()> {
+    #[cfg(windows)]
+    let _ = options;
     println!("Selected: {}", device.friendly_name);
     log::info!(
         "Chromecast: {}:{} ({})",
@@ -90,11 +148,15 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     );
     #[cfg(windows)]
     println!("Starting loopback capture...");
-    let mut sink = VirtualSink::new(
-        &device.friendly_name,
-        #[cfg(windows)]
-        capture_device,
-    )?;
+    #[cfg(not(windows))]
+    let mut sink = if options.local_volume {
+        log::info!("Using local software volume; Cast device volume synchronization is disabled");
+        VirtualSink::new_local(&device.friendly_name)?
+    } else {
+        VirtualSink::new(&device.friendly_name)?
+    };
+    #[cfg(windows)]
+    let mut sink = VirtualSink::new(&device.friendly_name, capture_device)?;
 
     println!("Launching mirroring receiver...");
     let mode = if device.is_audio_only {
@@ -135,7 +197,15 @@ pub fn run_with_device(device: Device, #[cfg(windows)] capture_device: Option<&s
     let stop = Arc::new(AtomicBool::new(false));
     install_signal_handler(&stop)?;
 
-    let monitor = spawn_session_monitor(incoming, session.transport_id.clone(), Arc::clone(&stop));
+    let monitor = spawn_session_monitor(
+        incoming,
+        session.transport_id.clone(),
+        Arc::clone(&stop),
+        #[cfg(not(windows))]
+        channel.sender(),
+        #[cfg(not(windows))]
+        (!options.local_volume).then(|| sink.volume_control()),
+    );
 
     #[cfg(not(windows))]
     println!(
@@ -170,19 +240,54 @@ fn spawn_session_monitor(
     incoming: Receiver<CastMessage>,
     transport: String,
     stop: Arc<AtomicBool>,
+    #[cfg(not(windows))] sender: CastSender,
+    #[cfg(not(windows))] volume_control: Option<VolumeControl>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("session-monitor".into())
         .spawn(move || {
+            #[cfg(not(windows))]
+            let mut volume_sync = volume_control
+                .as_ref()
+                .map(|_| VolumeSync::new(std::time::Instant::now()));
             // Default reason covers the recv-error path (dispatcher gone: our shutdown, or the TLS socket died). Overwritten if we see CLOSE.
             let mut reason = "Connection to Chromecast lost";
-            while let Ok(msg) = incoming.recv() {
+            while !stop.load(Ordering::Relaxed) {
+                #[cfg(not(windows))]
+                if let (Some(volume_sync), Some(volume_control)) =
+                    (volume_sync.as_mut(), volume_control.as_ref())
+                {
+                    let now = std::time::Instant::now();
+                    if let Some(volume) = volume_control.take_local_change() {
+                        apply_volume_effects(
+                            volume_sync.local_changed(volume, now),
+                            &sender,
+                            volume_control,
+                        );
+                    }
+                    apply_volume_effects(volume_sync.tick(now), &sender, volume_control);
+                }
+                let msg = match incoming.recv_timeout(Duration::from_millis(20)) {
+                    Ok(msg) => msg,
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
                 if msg.namespace == NS_CONNECTION
                     && msg.source == transport
                     && payload_type_is(&msg.payload, "CLOSE")
                 {
                     reason = "Receiver closed the mirroring session";
                     break;
+                }
+                #[cfg(not(windows))]
+                if let (Some(volume_sync), Some(volume_control)) =
+                    (volume_sync.as_mut(), volume_control.as_ref())
+                {
+                    apply_volume_effects(
+                        volume_sync.receive(&msg, std::time::Instant::now()),
+                        &sender,
+                        volume_control,
+                    );
                 }
                 log::debug!("cast rx [{}] {}", msg.namespace, msg.payload);
             }
@@ -191,6 +296,25 @@ fn spawn_session_monitor(
             }
         })
         .expect("spawn session monitor")
+}
+
+#[cfg(not(windows))]
+fn apply_volume_effects(effects: Vec<Effect>, sender: &CastSender, control: &VolumeControl) {
+    for effect in effects {
+        match effect {
+            Effect::Send(payload) => {
+                if let Err(e) = sender.send_json(PLATFORM_RECEIVER_ID, NS_RECEIVER, &payload) {
+                    log::warn!("Could not send receiver volume control: {e:#}");
+                }
+            }
+            Effect::SetLocal(volume) => {
+                if let Err(e) = control.set_remote(volume) {
+                    log::warn!("Could not update PipeWire volume controls: {e:#}");
+                }
+            }
+            Effect::Warning(message) => log::warn!("{message}"),
+        }
+    }
 }
 
 fn pick_device(mut devices: Vec<Device>) -> Result<Device> {

@@ -12,3 +12,4 @@ pub mod virtual_sink;
 #[cfg(windows)]
 #[path = "virtual_sink_windows.rs"]
 pub mod virtual_sink;
+pub mod volume;

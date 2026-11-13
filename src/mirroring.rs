@@ -257,7 +257,7 @@ fn wait_for_json_message<T>(
     bail!("timed out waiting for a reply")
 }
 
-fn new_request_id() -> u64 {
+pub(crate) fn new_request_id() -> u64 {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
