@@ -86,7 +86,33 @@ pub struct CastChannel {
     thread: Option<JoinHandle<()>>,
 }
 
+/// An outbound handle for control workers. Dropping the owning channel still
+/// stops and joins the dispatcher; this handle cannot prolong the connection.
+#[derive(Clone)]
+pub struct CastSender {
+    outbound: Sender<CastMessage>,
+}
+
+impl CastSender {
+    pub fn send_json(&self, destination: &str, namespace: &str, payload: &Value) -> Result<()> {
+        self.outbound
+            .send(CastMessage {
+                source: local_sender_id().into(),
+                destination: destination.into(),
+                namespace: namespace.into(),
+                payload: payload.to_string(),
+            })
+            .context("dispatcher gone")
+    }
+}
+
 impl CastChannel {
+    pub fn sender(&self) -> CastSender {
+        CastSender {
+            outbound: self.outbound.clone(),
+        }
+    }
+
     pub fn send(&self, msg: CastMessage) -> Result<()> {
         self.outbound.send(msg).context("dispatcher gone")
     }

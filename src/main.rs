@@ -36,6 +36,11 @@ struct Cli {
     )]
     port: u16,
 
+    /// Linux: use the original local software volume instead of controlling the Cast device volume.
+    #[cfg(not(windows))]
+    #[arg(long)]
+    local_volume: bool,
+
     /// Windows: playback device to capture via WASAPI loopback (case-insensitive substring of its name).
     /// Defaults to the default playback device. Whatever plays there is cast.
     #[cfg(windows)]
@@ -74,17 +79,23 @@ fn main() {
         }
     }
 
+    let options = pipeline::Options {
+        #[cfg(not(windows))]
+        local_volume: cli.local_volume,
+    };
     let result = match cli.host {
-        Some(host) => pipeline::run_with_host(
+        Some(host) => pipeline::run_with_host_options(
             &host,
             cli.port,
             #[cfg(windows)]
             cli.capture_device.as_deref(),
+            options,
         ),
-        None => pipeline::run(
+        None => pipeline::run_with_options(
             cli.device.as_deref(),
             #[cfg(windows)]
             cli.capture_device.as_deref(),
+            options,
         ),
     };
     if let Err(e) = result {
@@ -112,5 +123,32 @@ mod tests {
         assert!(parse(&["--device", "X", "--host", "192.168.1.20"]).is_err());
         assert!(parse(&["--device", "X", "--port", "32012"]).is_err());
         assert!(parse(&["--host", "192.168.1.20", "--port", "0"]).is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn local_volume_is_opt_in_and_works_with_either_device_selector() {
+        assert!(
+            !Cli::try_parse_from(["chromecast-sink"])
+                .unwrap()
+                .local_volume
+        );
+        assert!(
+            Cli::try_parse_from(["chromecast-sink", "--local-volume", "--device", "Group"])
+                .unwrap()
+                .local_volume
+        );
+        assert!(
+            Cli::try_parse_from([
+                "chromecast-sink",
+                "--local-volume",
+                "--host",
+                "192.168.1.20",
+                "--port",
+                "32012"
+            ])
+            .unwrap()
+            .local_volume
+        );
     }
 }
