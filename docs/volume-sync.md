@@ -95,7 +95,9 @@ distrobox enter --name YOUR_ARCH_BOX
 
 Inside the Arch box, install build dependencies. Arch's `rust` package includes
 Cargo; `libpipewire` contains the PipeWire and SPA development headers and
-pkg-config files. If an existing rustup toolchain is used instead of Arch's
+pkg-config files. The `pipewire` package supplies runtime client configuration,
+including `/usr/share/pipewire/client.conf`; install it alongside `libpipewire`
+and continue using Bazzite's desktop audio server. If an existing rustup toolchain is used instead of Arch's
 `rust` package, omit `rust` from the pacman command, retain that toolchain, and
 ensure it is Rust 1.85 or newer.
 
@@ -106,9 +108,8 @@ cargo --version
 pkg-config --modversion libpipewire-0.3 libspa-0.2 opus
 ```
 
-Use the modified source tree delivered with this change. A fresh clone of
-upstream alone does not contain these local changes. Replace the path below with
-the location of that tree as seen inside the box:
+Build from a checkout of the branch containing receiver-volume synchronization.
+Replace the path below with the checkout's location as seen inside the box:
 
 ```bash
 cd /path/to/chromecast-sink
@@ -233,6 +234,7 @@ impose a minimum audible volume on launch.
 
 Build/setup references:
 [Arch Rust file list](https://archlinux.org/packages/extra/x86_64/rust/files/),
+[Arch PipeWire file list](https://archlinux.org/packages/extra/x86_64/pipewire/files/),
 [Arch libpipewire file list](https://archlinux.org/packages/extra/x86_64/libpipewire/files/),
 [Arch Opus package](https://archlinux.org/packages/extra/x86_64/opus/), and
 [Distrobox enter documentation](https://distrobox.it/usage/distrobox-enter/).

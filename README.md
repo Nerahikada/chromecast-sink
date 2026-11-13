@@ -44,7 +44,7 @@ To get a dedicated output you can switch to, like the Linux sink, install a virt
 
 ### Linux
 
-Requires Rust 1.85+ and:
+Requires Rust 1.85+, PipeWire 0.3.70+ at build time and runtime, and:
 
 ```bash
 sudo apt install build-essential libpipewire-0.3-dev libopus-dev libclang-dev pkg-config
